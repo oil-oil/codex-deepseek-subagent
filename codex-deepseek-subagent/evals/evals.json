@@ -1,0 +1,23 @@
+{
+  "skill_name": "codex-deepseek-subagent",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
+      "expected_output": "使用程序闭环配置，通过标准输入传递 Key，不要求用户手动编辑文件，并以实际子任务元数据验收。",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "检查一下我的 DeepSeek 子 Agent 为什么没有生效。",
+      "expected_output": "先调用 status，再根据结构化状态调用 test 或 repair，不手动修改配置。",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "把 DeepSeek 子 Agent 卸载掉，但是保留 API Key。",
+      "expected_output": "调用 uninstall 且不传 remove-credential，只移除由 Skill 管理的配置。",
+      "files": []
+    }
+  ]
+}
