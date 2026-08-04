@@ -4,7 +4,7 @@
 
 - macOS
 - Python 3.11+
-- Codex CLI 或 ChatGPT 桌面应用至少启动过一次
+- ChatGPT/Codex 桌面应用至少启动过一次
 - DeepSeek 官方 Responses API
 - `deepseek-v4-flash`
 - 思考程度 `high`
@@ -23,7 +23,9 @@
 
 ## 原生派发兼容性
 
-管理目录会把当前父模型的 `multi_agent_version` 固定为 `v1`。在当前已验证的 Codex 版本中，`v2` 跨 Provider 派发会让 DeepSeek 收不到明文任务，因此不能用 `v2` 验收或日常派发。父模型变化后必须运行 `repair`，让目录中的对应父模型重新标记为 `v1`。
+检查和验收只使用桌面应用内置运行时，不使用 PATH 中的独立 CLI。版本号仅作诊断；兼容性由模型目录解析、DeepSeek 直连、原生派发、返回口令和数据库元数据共同决定。
+
+父模型从桌面当前配置动态读取。管理程序会把 `features.multi_agent_v2` 设为 `false`，并把该父模型的 `multi_agent_version` 固定为 `v1`，避免桌面端 v2 加密跨 Provider 子任务正文。父模型变化后运行 `repair`。
 
 日常任务只允许主 Agent 直接调用：
 
@@ -33,7 +35,7 @@ spawn_agent(agent_type="DeepSeek", fork_turns="none", ...)
 
 如果当前工具 schema 不认识 `DeepSeek`，只提示打开新任务或重启 Codex。不要用管理脚本或 `codex exec` 代做用户任务。
 
-`setup` 或 `test` 可以启动一个新的 Codex 任务做一次配置验收。验收证据必须来自两处：
+`setup` 或 `test` 会通过桌面内置运行时创建隔离验收会话。验收证据必须来自两处：
 
 1. `$CODEX_HOME/state_*.sqlite` 中包含对应子线程的 `threads` 表元数据：
 

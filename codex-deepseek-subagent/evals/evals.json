@@ -4,13 +4,13 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "仅在配置流程中使用管理程序，通过标准输入传递 Key；角色文件应为 ~/.codex/agents/DeepSeek.toml，父模型 multi_agent_version 固定为 v1；setup 或 test 可启动新 Codex 任务做一次验收。",
+      "expected_output": "先运行 status；缺少凭据时再索要 Key，并仅通过标准输入保存到 Keychain。配置与验收使用桌面内置运行时，管理程序按当前父模型应用 v1 明文派发设置。返回 ready 后提示重启桌面应用并新建任务。",
       "files": []
     },
     {
       "id": 2,
       "prompt": "检查一下我的 DeepSeek 子 Agent 为什么没有生效。",
-      "expected_output": "先调用 status，再按结构化状态调用 test 或 repair；验收必须检查子线程数据库 threads 元数据和 NATIVE_DEEPSEEK_OK 返回口令。",
+      "expected_output": "先调用 status，再按结构化状态调用 test 或 repair；不使用 PATH 中的独立 CLI。验收必须检查子线程数据库 threads 元数据和 NATIVE_DEEPSEEK_OK 返回口令。",
       "files": []
     },
     {
@@ -22,7 +22,7 @@
     {
       "id": 4,
       "prompt": "主模型刚换了，继续用 DeepSeek 子 Agent。",
-      "expected_output": "先运行 repair，让新父模型的 multi_agent_version 重新固定为 v1，再做一次原生路由验收。",
+      "expected_output": "从桌面当前配置读取新父模型，运行 repair 应用 v1 明文派发设置，再做一次原生路由验收；不能回退到硬编码 GPT 型号。",
       "files": []
     },
     {

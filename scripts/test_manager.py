@@ -43,6 +43,32 @@ class ManagerTests(unittest.TestCase):
         self.assertEqual(parsed["model_catalog_json"], "/tmp/models.json")
         self.assertEqual(parsed["features"]["multi_agent"], True)
 
+    def test_desktop_multi_agent_v2_can_be_disabled_and_removed(self) -> None:
+        source = '[features]\nmulti_agent = true\nmulti_agent_v2 = true\n'
+        updated = manager.set_table_bool(source, "features", "multi_agent_v2", False)
+        self.assertFalse(manager.parse_toml_text(updated)["features"]["multi_agent_v2"])
+        removed = manager.remove_table_bool_if_value(
+            updated,
+            "features",
+            "multi_agent_v2",
+            False,
+        )
+        self.assertNotIn("multi_agent_v2", manager.parse_toml_text(removed)["features"])
+
+    def test_quoted_features_table_is_updated_without_duplication(self) -> None:
+        source = '["features"]\nmulti_agent = true\nmulti_agent_v2 = true\n'
+        updated = manager.set_table_bool(source, "features", "multi_agent_v2", False)
+        self.assertFalse(manager.parse_toml_text(updated)["features"]["multi_agent_v2"])
+        self.assertEqual(updated.count('["features"]'), 1)
+        self.assertNotIn("[features]", updated)
+        restored = manager.set_table_bool(updated, "features", "multi_agent_v2", True)
+        self.assertTrue(manager.parse_toml_text(restored)["features"]["multi_agent_v2"])
+
+    def test_version_text_is_diagnostic_not_semver_gate(self) -> None:
+        proc = SimpleNamespace(returncode=0, stdout="desktop-codex nightly\n", stderr="")
+        with mock.patch.object(manager.subprocess, "run", return_value=proc):
+            self.assertEqual(manager.codex_version_text("desktop-codex"), "desktop-codex nightly")
+
     def test_merged_catalog_preserves_models_and_pins_parent_v1(self) -> None:
         base = {
             "models": [
@@ -62,6 +88,14 @@ class ManagerTests(unittest.TestCase):
         with self.assertRaises(manager.ManagerError) as raised:
             manager.merged_catalog({"models": [{"slug": "gpt-test"}]}, {"slug": manager.MODEL}, "missing-parent")
         self.assertEqual(raised.exception.code, "parent_model_missing")
+
+    def test_parent_model_has_no_hardcoded_fallback(self) -> None:
+        self.assertEqual(
+            manager.configured_parent_model({"model": "gpt-future-parent"}),
+            "gpt-future-parent",
+        )
+        self.assertIsNone(manager.configured_parent_model({}))
+        self.assertIsNone(manager.configured_parent_model({"model": manager.MODEL}))
 
     def test_agent_is_standalone_text_only_high_reasoning(self) -> None:
         text = manager.expected_agent_text()
@@ -91,12 +125,18 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("model_providers.deepseek.auth", manager.provider_conflicts(invalid))
 
     def test_static_status_is_configured_with_complete_codex_home(self) -> None:
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(manager, "keychain_has_key", return_value=True):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "keychain_has_key",
+            return_value=True,
+        ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
                 f'model_catalog_json = "{paths.catalog}"\n'
+                "[features]\n"
+                "multi_agent_v2 = false\n"
                 + manager.managed_provider_block()
             )
             paths.catalog.write_text(
@@ -112,9 +152,11 @@ class ManagerTests(unittest.TestCase):
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
             manager.write_manifest(paths, {"schema_version": 2})
-            status = manager.static_status(paths)
+            status = manager.static_status(paths, "desktop-codex")
             self.assertEqual(status["status"], "configured")
             self.assertTrue(status["checks"]["parent_uses_plaintext_v1"])
+            self.assertTrue(status["checks"]["desktop_multi_agent_v2_disabled"])
+            self.assertTrue(status["checks"]["desktop_codex_detected"])
             self.assertTrue(status["checks"]["provider_valid"])
 
     def test_native_test_uses_fresh_session_without_catalog_overrides(self) -> None:
@@ -166,7 +208,7 @@ class ManagerTests(unittest.TestCase):
             self.assertNotIn("--disable", argv)
             self.assertNotIn("--enable", argv)
             self.assertFalse(any("model_catalog_json" in value for value in argv))
-            self.assertTrue(result["fresh_session_native"])
+            self.assertTrue(result["desktop_fresh_session_native"])
             self.assertEqual(result["child_id"], "child-123")
             self.assertEqual({key: result[key] for key in expected}, expected)
 
@@ -274,12 +316,43 @@ class ManagerTests(unittest.TestCase):
                         self.fail("锁已被占用时不应进入操作区")
             self.assertEqual(raised.exception.code, "operation_in_progress")
 
+    def test_onboarding_requests_credential_before_writing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "keychain_available",
+            return_value=True,
+        ), mock.patch.object(manager, "keychain_has_key", return_value=False):
+            paths = manager.resolve_paths(directory)
+            result = manager.setup(paths, "desktop-codex", False, False)
+            self.assertEqual(result, {"status": "credential_missing", "credential": "deepseek_api_key"})
+            self.assertFalse(paths.config.exists())
+            self.assertFalse(paths.manifest.exists())
+
+    def test_skip_live_test_does_not_probe_diagnostic_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "keychain_available",
+            return_value=True,
+        ), mock.patch.object(manager, "keychain_has_key", return_value=True), mock.patch.object(
+            manager,
+            "install",
+            return_value={"backup": "/tmp/backup", "adopted_existing": False},
+        ), mock.patch.object(manager, "codex_version_text") as version:
+            result = manager.setup(manager.resolve_paths(directory), "desktop-codex", False, True)
+            self.assertEqual(result["status"], "configured")
+            version.assert_not_called()
+
     def test_repeated_setup_preserves_ownership_and_previous_catalog_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             external_catalog = "/tmp/catalog-before-deepseek.json"
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(f'model = "gpt-5.6-sol"\nmodel_catalog_json = "{external_catalog}"\n')
+            paths.config.write_text(
+                f'model = "gpt-5.6-sol"\n'
+                f'model_catalog_json = "{external_catalog}"\n'
+                "[features]\n"
+                "multi_agent_v2 = true\n"
+            )
             paths.catalog.write_text(json.dumps({"models": [{"slug": "original"}]}))
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
@@ -287,7 +360,7 @@ class ManagerTests(unittest.TestCase):
             patches = [
                 mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
                 mock.patch.object(manager, "load_base_catalog", return_value=base),
-                mock.patch.object(manager, "codex_version", return_value=(0, 200, 0)),
+                mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
                 mock.patch.object(manager, "keychain_available", return_value=True),
                 mock.patch.object(manager, "keychain_has_key", return_value=True),
             ]
@@ -304,6 +377,11 @@ class ManagerTests(unittest.TestCase):
             self.assertFalse(manifest["managed_agent_file"])
             self.assertTrue(manifest["catalog_preexisted"])
             self.assertTrue(manifest["adopted_existing"])
+            self.assertTrue(manifest["managed_multi_agent_v2"])
+            self.assertTrue(manifest["previous_multi_agent_v2"])
+            self.assertFalse(
+                manager.parse_toml_text(paths.config.read_text())["features"]["multi_agent_v2"]
+            )
 
     def test_uninstall_restores_preexisting_catalog_and_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -311,7 +389,12 @@ class ManagerTests(unittest.TestCase):
             external_catalog = "/tmp/catalog-before-uninstall.json"
             original_catalog = {"models": [{"slug": "original", "custom": True}]}
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(f'model = "gpt-5.6-sol"\nmodel_catalog_json = "{external_catalog}"\n')
+            paths.config.write_text(
+                f'model = "gpt-5.6-sol"\n'
+                f'model_catalog_json = "{external_catalog}"\n'
+                "[features]\n"
+                "multi_agent_v2 = true\n"
+            )
             paths.catalog.write_text(json.dumps(original_catalog) + "\n")
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
@@ -332,6 +415,7 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(json.loads(paths.catalog.read_text()), original_catalog)
             parsed = manager.parse_toml_text(paths.config.read_text())
             self.assertEqual(parsed["model_catalog_json"], external_catalog)
+            self.assertTrue(parsed["features"]["multi_agent_v2"])
             self.assertNotIn(manager.PROVIDER_BEGIN, paths.config.read_text())
             self.assertTrue(paths.agent.is_file())
 
@@ -447,7 +531,7 @@ class ManagerTests(unittest.TestCase):
             patches = [
                 mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
                 mock.patch.object(manager, "load_base_catalog", side_effect=lambda *_: copy.deepcopy(base)),
-                mock.patch.object(manager, "codex_version", return_value=(0, 200, 0)),
+                mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
                 mock.patch.object(manager, "keychain_available", return_value=True),
                 mock.patch.object(manager, "keychain_has_key", return_value=True),
             ]
@@ -528,12 +612,14 @@ class ManagerTests(unittest.TestCase):
             manager,
             "keychain_has_key",
             return_value=True,
-        ):
+        ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
                 f'model_catalog_json = "{paths.catalog}"\n'
+                "[features]\n"
+                "multi_agent_v2 = false\n"
                 + manager.managed_provider_block()
                 + '\n[agents."DeepSeek"]\n'
                 'description = "legacy role registration"\n'
@@ -555,7 +641,7 @@ class ManagerTests(unittest.TestCase):
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
             manager.write_manifest(paths, {"schema_version": 2})
-            self.assertEqual(manager.static_status(paths)["status"], "partial")
+            self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "partial")
             patches = [
                 mock.patch.object(
                     manager,
@@ -571,7 +657,7 @@ class ManagerTests(unittest.TestCase):
             with patches[0], patches[1]:
                 manager.install(paths, "codex")
             self.assertNotIn('[agents."DeepSeek"]', paths.config.read_text())
-            self.assertEqual(manager.static_status(paths)["status"], "configured")
+            self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "configured")
 
     def test_status_reports_partial_for_empty_home(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

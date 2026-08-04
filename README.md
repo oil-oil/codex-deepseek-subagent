@@ -18,37 +18,45 @@
   <img src="./assets/readme/workflow.svg" width="100%" alt="DeepSeek 子 Agent 的配置和验证流程">
 </p>
 
-## 安装
+## 快速开始
+
+要求：macOS、Python 3.11+、ChatGPT/Codex 桌面应用，以及 DeepSeek 官方 API Key。
+
+1. 全局安装 Skill：
 
 ```bash
 npx skills add oil-oil/codex-deepseek-subagent -g -y
 ```
 
-要求：macOS、Python 3.11+、已启动过一次 Codex CLI 或 ChatGPT 桌面应用，以及 DeepSeek 官方 API Key。
+2. 重启桌面应用并新建任务，让 Skill 生效。
 
-首次配置时告诉 Codex：
+3. 在新任务中发出配置请求：
 
 ```text
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-管理程序会把自定义角色写入：
+4. Codex 会先检查状态；缺少凭据时再索要 API Key，通过标准输入保存到 macOS Keychain，然后自动配置并验收。
+
+5. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
 ```text
-~/.codex/agents/DeepSeek.toml
+用 DeepSeek 子 Agent 检查这个项目。
 ```
 
-如果使用其他 `CODEX_HOME`，路径相应改为 `$CODEX_HOME/agents/DeepSeek.toml`。
+配置成功后，角色文件位于 `$CODEX_HOME/agents/DeepSeek.toml`；默认 `CODEX_HOME` 为 `~/.codex`。
 
-## 原生派发契约
+## 使用与兼容性
 
 - 日常任务只能由主 Agent 直接调用 `spawn_agent(agent_type="DeepSeek", fork_turns="none")`。
-- 管理目录会把当前父模型的 `multi_agent_version` 固定为 `v1`。在当前已验证的 Codex 版本中，`v2` 跨 Provider 派发会让 DeepSeek 收不到明文任务。
-- 父模型变化后必须运行 `repair`，重新写入对应目录并验收。
+- 配置与验收只使用桌面应用内置运行时；版本仅作诊断，实际能力以真实派发结果为准。
+- 父模型从当前配置读取；切换父模型后运行 `repair`。
 - DeepSeek 只处理文本。图片、视频、截图等视觉输入必须由父 Agent 先识别并整理成文字。
 - 当前工具若不认识 `DeepSeek` 角色，只提示用户打开新任务或重启 Codex；不得用脚本或 `codex exec` 代做用户任务。
 
-## 配置与验收
+v1/v2 路由原因、配置位置和回滚规则见 [兼容性说明](codex-deepseek-subagent/references/compatibility.md)。
+
+## 管理命令
 
 管理命令由 Skill 按需调用：
 
@@ -61,7 +69,7 @@ python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
 
-`setup` 或 `test` 可以启动一个新的 Codex 任务做一次配置验收；这不是日常任务的替代入口。验收必须同时满足：
+`setup` 或 `test` 会创建隔离验收会话；这不是日常任务的替代入口。验收必须同时满足数据库路由元数据与子 Agent 返回口令：
 
 ```text
 model_provider = deepseek
@@ -70,7 +78,11 @@ reasoning_effort = high
 agent_role = DeepSeek
 ```
 
-并且从子线程数据库的 `threads` 元数据读取同样的字段，同时确认子 Agent 返回口令 `NATIVE_DEEPSEEK_OK`。不能只相信子 Agent 的自述。
+```text
+NATIVE_DEEPSEEK_OK
+```
+
+不能只相信子 Agent 的自述。
 
 ## 安全与回滚
 
@@ -78,7 +90,7 @@ agent_role = DeepSeek
 - 配置和模型目录写入前会创建备份；解析或实时测试失败会恢复本次事务。
 - 不修改主任务的顶层模型或登录方式。
 
-详细兼容性说明见 [codex-deepseek-subagent/SKILL.md](codex-deepseek-subagent/SKILL.md) 和 [references/compatibility.md](codex-deepseek-subagent/references/compatibility.md)。
+Skill 执行规则见 [SKILL.md](codex-deepseek-subagent/SKILL.md)。
 
 ## 品牌素材
 

@@ -30,6 +30,7 @@ PROVIDER = "deepseek"
 ROLE = "DeepSeek"
 EFFORT = "high"
 PARENT_MULTI_AGENT_VERSION = "v1"
+DESKTOP_MULTI_AGENT_V2 = False
 MAX_STATE_DATABASES = 32
 METADATA_WAIT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 5.0
@@ -39,7 +40,10 @@ PROVIDER_BEGIN = "# BEGIN CODEX-DEEPSEEK-SUBAGENT PROVIDER"
 PROVIDER_END = "# END CODEX-DEEPSEEK-SUBAGENT PROVIDER"
 ROLE_BEGIN = "# BEGIN CODEX-DEEPSEEK-SUBAGENT ROLE"
 ROLE_END = "# END CODEX-DEEPSEEK-SUBAGENT ROLE"
-MIN_CODEX_VERSION = (0, 144, 0)
+DESKTOP_CODEX_CANDIDATES = (
+    Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
+    Path("/Applications/Codex.app/Contents/Resources/codex"),
+)
 
 
 class ManagerError(RuntimeError):
@@ -107,27 +111,21 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
         raise
 
 
-def parse_version(text: str) -> tuple[int, int, int] | None:
-    match = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
-    return tuple(map(int, match.groups())) if match else None
+def find_desktop_codex() -> str:
+    configured = os.environ.get("CODEX_DESKTOP_BIN")
+    candidates = (Path(configured).expanduser(),) if configured else DESKTOP_CODEX_CANDIDATES
+    for candidate in candidates:
+        if candidate.is_file():
+            return str(candidate.resolve())
+    raise ManagerError("desktop_codex_missing", "没有找到 Codex 桌面应用内置运行时。请先安装或启动桌面应用。")
 
 
-def find_codex() -> str:
-    configured = os.environ.get("CODEX_BIN")
-    if configured and Path(configured).is_file():
-        return str(Path(configured).resolve())
-    found = shutil.which("codex")
-    if found:
-        return found
-    raise ManagerError("codex_missing", "没有找到 Codex CLI。请先安装或启动 Codex。")
-
-
-def codex_version(codex_bin: str) -> tuple[int, int, int]:
+def codex_version_text(codex_bin: str) -> str:
     proc = subprocess.run([codex_bin, "--version"], capture_output=True, text=True, timeout=15)
-    version = parse_version(f"{proc.stdout}\n{proc.stderr}")
-    if proc.returncode != 0 or not version:
-        raise ManagerError("codex_version_unknown", "无法读取 Codex 版本。")
-    return version
+    text = f"{proc.stdout}\n{proc.stderr}".strip()
+    if proc.returncode != 0 or not text:
+        raise ManagerError("codex_version_unknown", "无法读取 Codex 桌面应用内置运行时版本。")
+    return text
 
 
 def keychain_account() -> str:
@@ -205,13 +203,17 @@ def remove_managed_blocks(text: str) -> str:
     return remove_marked_block(text, ROLE_BEGIN, ROLE_END)
 
 
-def remove_toml_table(text: str, table: str) -> str:
-    lines = text.splitlines()
+def toml_table_header(table: str) -> re.Pattern[str]:
     tokens = [
         rf"(?:{re.escape(part)}|\"{re.escape(part)}\"|'{re.escape(part)}')"
         for part in table.split(".")
     ]
-    header = re.compile(r"^\[\s*" + r"\s*\.\s*".join(tokens) + r"\s*\]\s*(?:#.*)?$")
+    return re.compile(r"^\[\s*" + r"\s*\.\s*".join(tokens) + r"\s*\]\s*(?:#.*)?$")
+
+
+def remove_toml_table(text: str, table: str) -> str:
+    lines = text.splitlines()
+    header = toml_table_header(table)
     start = next((index for index, line in enumerate(lines) if header.match(line.strip())), None)
     if start is None:
         return text
@@ -254,6 +256,49 @@ def remove_top_level_key_if_value(text: str, key: str, expected: str) -> str:
     first_table = next((i for i, line in enumerate(lines) if line.strip().startswith("[")), len(lines))
     pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"{re.escape(expected)}"\s*$')
     kept = [line for index, line in enumerate(lines) if not (index < first_table and pattern.match(line))]
+    return "\n".join(kept).rstrip() + "\n"
+
+
+def set_table_bool(text: str, table: str, key: str, value: bool) -> str:
+    lines = text.splitlines()
+    assignment = f"{key} = {'true' if value else 'false'}"
+    header = toml_table_header(table)
+    start = next((index for index, line in enumerate(lines) if header.match(line.strip())), None)
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines.extend((f"[{table}]", assignment))
+        return "\n".join(lines).rstrip() + "\n"
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].strip().startswith("[")),
+        len(lines),
+    )
+    key_pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
+    for index in range(start + 1, end):
+        if key_pattern.match(lines[index]):
+            lines[index] = assignment
+            return "\n".join(lines).rstrip() + "\n"
+    lines.insert(end, assignment)
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def remove_table_bool_if_value(text: str, table: str, key: str, expected: bool) -> str:
+    lines = text.splitlines()
+    header = toml_table_header(table)
+    start = next((index for index, line in enumerate(lines) if header.match(line.strip())), None)
+    if start is None:
+        return text
+    end = next(
+        (index for index in range(start + 1, len(lines)) if lines[index].strip().startswith("[")),
+        len(lines),
+    )
+    expected_text = "true" if expected else "false"
+    pattern = re.compile(rf"^\s*{re.escape(key)}\s*=\s*{expected_text}\s*(?:#.*)?$")
+    kept = [
+        line
+        for index, line in enumerate(lines)
+        if not (start < index < end and pattern.match(line))
+    ]
     return "\n".join(kept).rstrip() + "\n"
 
 
@@ -416,11 +461,11 @@ def merged_catalog(base: dict[str, Any], deepseek_model: dict[str, Any], parent_
     return {"models": models}
 
 
-def configured_parent_model(config: dict[str, Any]) -> str:
+def configured_parent_model(config: dict[str, Any]) -> str | None:
     model = config.get("model")
     if isinstance(model, str) and model and not model.startswith("deepseek"):
         return model
-    return "gpt-5.6-sol"
+    return None
 
 
 def make_backup(paths: Paths) -> Path:
@@ -490,12 +535,24 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
     else:
         catalog_preexisted = bool(previous_manifest.get("catalog_preexisted", catalog_preexisted_now))
         agent_preexisted = bool(previous_manifest.get("agent_preexisted", agent_preexisted_now))
+    current_multi_agent_v2 = (parsed.get("features") or {}).get("multi_agent_v2")
+    previous_multi_agent_v2 = (
+        previous_manifest.get("previous_multi_agent_v2")
+        if previous_manifest.get("managed_multi_agent_v2")
+        else current_multi_agent_v2
+    )
+    managed_multi_agent_v2 = bool(
+        previous_manifest.get("managed_multi_agent_v2")
+        or current_multi_agent_v2 is not DESKTOP_MULTI_AGENT_V2
+    )
 
     backup = make_backup(paths)
     try:
         deepseek_model = fetch_official_deepseek_model()
         base = load_base_catalog(codex_bin, paths, parsed)
         parent_model = configured_parent_model(parsed)
+        if not parent_model:
+            raise ManagerError("parent_model_unconfigured", "桌面配置中没有明确的非 DeepSeek 父模型。")
         previous_parent = previous_manifest.get("parent_model")
         if previous_parent and previous_parent != parent_model:
             previous_entry = next(
@@ -527,6 +584,12 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
         if not provider_exists:
             new_config = new_config.rstrip() + "\n" + managed_provider_block()
         new_config = set_top_level_key(new_config, "model_catalog_json", str(paths.catalog))
+        new_config = set_table_bool(
+            new_config,
+            "features",
+            "multi_agent_v2",
+            DESKTOP_MULTI_AGENT_V2,
+        )
         parse_toml_text(new_config)
         json.loads(catalog_bytes)
 
@@ -544,7 +607,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
                 catalog_original_backup = str(candidate)
         adopted_existing = provider_exists or agent_preexisted or catalog_preexisted
         manifest = {
-            "schema_version": 2,
+            "schema_version": 3,
             "installed_at": datetime.now().isoformat(timespec="seconds"),
             "backup": str(backup),
             "previous_model_catalog_json": previous_catalog_value,
@@ -559,6 +622,9 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
             "parent_model": parent_model,
             "parent_multi_agent_version": PARENT_MULTI_AGENT_VERSION,
             "parent_original_multi_agent_version": parent_original_version,
+            "managed_multi_agent_v2": managed_multi_agent_v2,
+            "previous_multi_agent_v2": previous_multi_agent_v2,
+            "desktop_multi_agent_v2": DESKTOP_MULTI_AGENT_V2,
             "config_sha256": sha256_bytes(new_config.encode()),
             "catalog_sha256": sha256_bytes(catalog_bytes),
             "agent_sha256": sha256_bytes(expected_agent_text().encode()),
@@ -595,14 +661,19 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
     checks["legacy_role_registration_present"] = bool(role)
     checks["legacy_role_registration_absent"] = not bool(role)
     checks["catalog_selected"] = Path(parsed.get("model_catalog_json", "")).expanduser() == paths.catalog
+    checks["desktop_multi_agent_v2"] = (parsed.get("features") or {}).get("multi_agent_v2")
+    checks["desktop_multi_agent_v2_disabled"] = (
+        checks["desktop_multi_agent_v2"] is DESKTOP_MULTI_AGENT_V2
+    )
     parent_model = configured_parent_model(parsed)
     checks["parent_model"] = parent_model
+    checks["parent_model_configured"] = bool(parent_model)
     if paths.catalog.is_file():
         try:
             data = json.loads(paths.catalog.read_text())
             checks["model_registered"] = any(item.get("slug") == MODEL for item in data.get("models", []))
             parent_entry = next(
-                (item for item in data.get("models", []) if item.get("slug") == parent_model),
+                (item for item in data.get("models", []) if parent_model and item.get("slug") == parent_model),
                 None,
             )
             checks["parent_multi_agent_version"] = (
@@ -623,21 +694,26 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
     version: tuple[int, int, int] | None = None
     if codex_bin:
         try:
-            version = codex_version(codex_bin)
-            checks["codex_version"] = ".".join(map(str, version))
-            checks["codex_supported"] = version >= MIN_CODEX_VERSION
+            version_text = codex_version_text(codex_bin)
+            checks["desktop_codex_path"] = codex_bin
+            checks["desktop_codex_version"] = version_text
+            checks["desktop_codex_detected"] = True
         except ManagerError as exc:
+            checks["desktop_codex_detected"] = False
             errors.append(str(exc))
     required = (
         "config_valid",
         "provider_valid",
         "catalog_selected",
         "model_registered",
+        "parent_model_configured",
         "parent_uses_plaintext_v1",
+        "desktop_multi_agent_v2_disabled",
         "agent_content_valid",
         "credential_present",
         "manifest_exists",
         "legacy_role_registration_absent",
+        "desktop_codex_detected",
     )
     ready = all(checks.get(key) is True for key in required)
     return result("configured" if ready else "partial", checks=checks, errors=errors)
@@ -682,7 +758,10 @@ def direct_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
 
 def choose_parent_model(paths: Paths) -> str:
     parsed = parse_toml_text(paths.config.read_text())
-    return configured_parent_model(parsed)
+    parent_model = configured_parent_model(parsed)
+    if not parent_model:
+        raise ManagerError("parent_model_unconfigured", "桌面配置中没有明确的非 DeepSeek 父模型。")
+    return parent_model
 
 
 def query_child_metadata(
@@ -823,7 +902,7 @@ def native_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
                 "expected": expected,
             },
         )
-    return {"fresh_session_native": True, "child_id": child_id, **expected}
+    return {"desktop_fresh_session_native": True, "child_id": child_id, **expected}
 
 
 def run_tests(paths: Paths, codex_bin: str) -> dict[str, Any]:
@@ -845,12 +924,6 @@ def restore_backup(paths: Paths, backup: Path) -> None:
 
 
 def setup(paths: Paths, codex_bin: str, api_key_stdin: bool, skip_live_test: bool) -> dict[str, Any]:
-    version = codex_version(codex_bin)
-    if version < MIN_CODEX_VERSION:
-        raise ManagerError(
-            "unsupported",
-            f"Codex 版本过低：{'.'.join(map(str, version))}，最低需要 0.144.0。",
-        )
     if not keychain_available():
         raise ManagerError("unsupported", "当前版本只支持 macOS Keychain。")
     credential_created = False
@@ -899,6 +972,17 @@ def disable(paths: Paths) -> dict[str, Any]:
     if paths.config.is_file():
         text = paths.config.read_text()
         updated = remove_marked_block(text, ROLE_BEGIN, ROLE_END)
+        if manifest.get("managed_multi_agent_v2"):
+            previous = manifest.get("previous_multi_agent_v2")
+            if isinstance(previous, bool):
+                updated = set_table_bool(updated, "features", "multi_agent_v2", previous)
+            else:
+                updated = remove_table_bool_if_value(
+                    updated,
+                    "features",
+                    "multi_agent_v2",
+                    DESKTOP_MULTI_AGENT_V2,
+                )
         if updated != text:
             parse_toml_text(updated)
             atomic_write(paths.config, updated.encode())
@@ -997,7 +1081,7 @@ def main() -> int:
     args = parser.parse_args()
     paths = resolve_paths(args.codex_home)
     try:
-        codex_bin = find_codex() if args.command in {"status", "setup", "repair", "test"} else None
+        codex_bin = find_desktop_codex() if args.command in {"status", "setup", "repair", "test"} else None
         if args.command == "status":
             payload = static_status(paths, codex_bin)
         else:
