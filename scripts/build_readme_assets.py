@@ -49,7 +49,7 @@ hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" vie
       <text x="42" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">native spawn</text>
       <rect x="178" width="142" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
       <text x="201" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Keychain</text>
-      <rect x="334" width="154" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
+      <rect x="334" width="184" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
       <text x="357" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">metadata proof</text>
     </g>
   </g>
