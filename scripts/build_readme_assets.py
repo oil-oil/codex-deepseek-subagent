@@ -18,7 +18,7 @@ def png_data(path: Path) -> str:
 codex = png_data(ASSETS / "brand" / "codex-official.png")
 deepseek = png_data(ASSETS / "brand" / "deepseek-official.png")
 
-hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
+hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" viewBox="0 0 1200 380" role="img" aria-labelledby="title desc">
   <title id="title">codex-deepseek-subagent</title>
   <desc id="desc">将 DeepSeek 注册为 Codex 原生子 Agent，并验证实际会话路由。</desc>
   <defs>
@@ -43,18 +43,9 @@ hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" vie
     <text x="0" y="88" fill="#FFFFFF" font-size="58" font-weight="760" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">codex-deepseek</text>
     <text x="0" y="148" fill="#B8C6E4" font-size="31" font-weight="620" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">subagent</text>
     <text x="0" y="205" fill="#C7D1E8" font-size="22" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">将 DeepSeek 注册为 Codex 原生子 Agent</text>
-    <g transform="translate(0 246)">
-      <rect width="164" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
-      <circle cx="24" cy="21" r="6" fill="#42D392"/>
-      <text x="42" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">native spawn</text>
-      <rect x="178" width="142" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
-      <text x="201" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">Keychain</text>
-      <rect x="334" width="184" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
-      <text x="357" y="28" fill="#DCE6FA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">metadata proof</text>
-    </g>
   </g>
 
-  <g transform="translate(648 84)">
+  <g transform="translate(648 76)">
     <rect x="0" y="0" width="488" height="272" rx="26" fill="#0B1020" stroke="#2B3B60"/>
     <image href="{codex}" x="26" y="34" width="128" height="128"/>
     <text x="90" y="183" text-anchor="middle" fill="#FFFFFF" font-size="22" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">Codex</text>
