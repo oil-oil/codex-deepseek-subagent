@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex DeepSeek Subagent"
+  short_description: "配置并验证 Codex 原生 DeepSeek 子 Agent"
+  default_prompt: "使用 $codex-deepseek-subagent 配置并验证 DeepSeek 原生子 Agent。"

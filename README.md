@@ -1,22 +1,21 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：把 DeepSeek 配置成 Codex 原生子 Agent">
+  <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：将 DeepSeek 注册为 Codex 原生子 Agent">
 </p>
 
+把 `deepseek-v4-flash` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。管理程序只负责配置和验收；配置完成后的普通编码任务由当前主 Agent 直接派发。
+
+## 适用范围
+
+这个 Skill 只用于：
+
+- 首次配置、状态检查和实时测试；
+- 父模型变化后的修复；
+- 停用或卸载 DeepSeek 配置。
+
+普通的编码、探索、实现、评审和验证任务不应重复运行配置流程。
+
 <p align="center">
-  <a href="#安装">安装</a> ·
-  <a href="#使用">使用</a> ·
-  <a href="#配置内容">配置内容</a> ·
-  <a href="#安全限制">安全限制</a>
-</p>
-
-## 功能
-
-`codex-deepseek-subagent` 将 `deepseek-v4-flash` 注册为 Codex 原生自定义子 Agent，并通过子任务会话元数据验证实际使用的 Provider、模型、思考程度和角色。
-
-Python 管理程序负责凭据保存、配置修改、测试和回滚。Agent 不直接编辑配置文件或钥匙串。
-
-<p align="center">
-  <img src="./assets/readme/workflow.svg" width="100%" alt="从环境检查到元数据验收的自动配置流程">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="DeepSeek 子 Agent 的配置和验证流程">
 </p>
 
 ## 安装
@@ -25,56 +24,33 @@ Python 管理程序负责凭据保存、配置修改、测试和回滚。Agent �
 npx skills add oil-oil/codex-deepseek-subagent -g -y
 ```
 
-运行环境：
+要求：macOS、Python 3.11+、已启动过一次 Codex CLI 或 ChatGPT 桌面应用，以及 DeepSeek 官方 API Key。
 
-- macOS
-- Python 3.11+
-- Codex CLI 或 ChatGPT 桌面应用已至少启动一次
-- DeepSeek 官方 API Key
-
-## 使用
-
-首次配置时告诉 Agent：
+首次配置时告诉 Codex：
 
 ```text
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-如果本机没有 DeepSeek 凭据，Agent 会索要 API Key，并通过标准输入传给管理程序。
-
-配置完成后，可以直接指定 DeepSeek 子 Agent：
+管理程序会把自定义角色写入：
 
 ```text
-用 DeepSeek 子 Agent 检查这个模块的错误处理。
+~/.codex/agents/DeepSeek.toml
 ```
 
-这个 Skill 只处理首次配置、检查、修复、停用和卸载。配置验收成功后，Codex 会保留原生 `DeepSeek` 角色；日常任务由主 Agent 直接调用，不会重复运行配置流程。
+如果使用其他 `CODEX_HOME`，路径相应改为 `$CODEX_HOME/agents/DeepSeek.toml`。
 
-## 配置内容
+## 原生派发契约
 
-管理程序执行以下操作：
+- 日常任务只能由主 Agent 直接调用 `spawn_agent(agent_type="DeepSeek", fork_turns="none")`。
+- 管理目录会把当前父模型的 `multi_agent_version` 固定为 `v1`。在当前已验证的 Codex 版本中，`v2` 跨 Provider 派发会让 DeepSeek 收不到明文任务。
+- 父模型变化后必须运行 `repair`，重新写入对应目录并验收。
+- DeepSeek 只处理文本。图片、视频、截图等视觉输入必须由父 Agent 先识别并整理成文字。
+- 当前工具若不认识 `DeepSeek` 角色，只提示用户打开新任务或重启 Codex；不得用脚本或 `codex exec` 代做用户任务。
 
-1. 检查 Codex 版本、配置和当前模型目录。
-2. 把 API Key 写入 macOS Keychain。
-3. 从 DeepSeek 官方安装脚本读取模型元数据，但不执行远程脚本。
-4. 合并模型目录，保留原有 OpenAI 模型。
-5. 注册 `deepseek` Provider 和 `DeepSeek` 自定义 Agent。
-6. 运行 DeepSeek 直连测试。
-7. 运行原生 `spawn_agent(agent_type="DeepSeek")` 测试。
-8. 从 Codex 会话数据库确认实际 Provider、模型、思考程度和角色。
+## 配置与验收
 
-配置通过以下会话元数据验收：
-
-```text
-model_provider = deepseek
-model = deepseek-v4-flash
-reasoning_effort = high
-agent_role = DeepSeek
-```
-
-## 管理命令
-
-以下命令供 Skill 调用：
+管理命令由 Skill 按需调用：
 
 ```bash
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
@@ -85,22 +61,30 @@ python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
 
-## 安全限制
+`setup` 或 `test` 可以启动一个新的 Codex 任务做一次配置验收；这不是日常任务的替代入口。验收必须同时满足：
 
-- API Key 只通过标准输入传入，并保存到 macOS Keychain；不会写入 `config.toml`、模型目录、临时文件或测试结果。
-- 修改配置前会创建备份。新配置和模型目录通过解析验证后才会替换原文件。
-- 实时测试失败时，程序会回滚本次修改。
-- 不修改 Codex 主任务的顶层模型或登录方式。
-- DeepSeek V4 Flash 当前只接受文本；图片、视频和截图由父 Agent 识别并整理成文字后再派发。
-- 如果发现不兼容的现有配置，程序会停止并报告冲突。
+```text
+model_provider = deepseek
+model = deepseek-v4-flash
+reasoning_effort = high
+agent_role = DeepSeek
+```
+
+并且从子线程数据库的 `threads` 元数据读取同样的字段，同时确认子 Agent 返回口令 `NATIVE_DEEPSEEK_OK`。不能只相信子 Agent 的自述。
+
+## 安全与回滚
+
+- API Key 只通过标准输入传入并保存到 macOS Keychain，不写入配置、临时文件或测试输出。
+- 配置和模型目录写入前会创建备份；解析或实时测试失败会恢复本次事务。
+- 不修改主任务的顶层模型或登录方式。
+
+详细兼容性说明见 [codex-deepseek-subagent/SKILL.md](codex-deepseek-subagent/SKILL.md) 和 [references/compatibility.md](codex-deepseek-subagent/references/compatibility.md)。
 
 ## 品牌素材
 
-Codex 图标来自官方 ChatGPT 应用资源，DeepSeek 图标来自 DeepSeek 官方 CDN。
+Codex 图标来自官方 ChatGPT 应用资源，DeepSeek 图标来自 DeepSeek 官方 CDN。相关商标与品牌素材归各自权利人所有，本项目与 OpenAI 或 DeepSeek 无隶属或官方背书关系。
 
-相关商标与品牌素材归各自权利人所有，本项目与 OpenAI 或 DeepSeek 无隶属或官方背书关系。
-
-## 开发与验证
+## 开发验证
 
 ```bash
 python3 scripts/test_manager.py

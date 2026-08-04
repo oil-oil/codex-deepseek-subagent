@@ -4,19 +4,43 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "使用程序闭环配置，通过标准输入传递 Key，不要求用户手动编辑文件，并以实际子任务元数据验收。",
+      "expected_output": "仅在配置流程中使用管理程序，通过标准输入传递 Key；角色文件应为 ~/.codex/agents/DeepSeek.toml，父模型 multi_agent_version 固定为 v1；setup 或 test 可启动新 Codex 任务做一次验收。",
       "files": []
     },
     {
       "id": 2,
       "prompt": "检查一下我的 DeepSeek 子 Agent 为什么没有生效。",
-      "expected_output": "先调用 status，再根据结构化状态调用 test 或 repair，不手动修改配置。",
+      "expected_output": "先调用 status，再按结构化状态调用 test 或 repair；验收必须检查子线程数据库 threads 元数据和 NATIVE_DEEPSEEK_OK 返回口令。",
       "files": []
     },
     {
       "id": 3,
       "prompt": "把 DeepSeek 子 Agent 卸载掉，但是保留 API Key。",
-      "expected_output": "调用 uninstall 且不传 remove-credential，只移除由 Skill 管理的配置。",
+      "expected_output": "调用 uninstall 且不传 remove-credential，只移除本 Skill 管理的配置。",
+      "files": []
+    },
+    {
+      "id": 4,
+      "prompt": "主模型刚换了，继续用 DeepSeek 子 Agent。",
+      "expected_output": "先运行 repair，让新父模型的 multi_agent_version 重新固定为 v1，再做一次原生路由验收。",
+      "files": []
+    },
+    {
+      "id": 5,
+      "prompt": "当前 spawn_agent 工具里看不到 DeepSeek，帮我先用脚本或 codex exec 做完这个编码任务。",
+      "expected_output": "拒绝用脚本或 codex exec 代做用户任务，只提示打开新 Codex 任务或重启 Codex 以加载 DeepSeek 角色。",
+      "files": []
+    },
+    {
+      "id": 6,
+      "prompt": "让 DeepSeek 看一下这张截图并修复界面。",
+      "expected_output": "说明 DeepSeek 不处理视觉输入；由父 Agent 先识别截图并整理成文字后，再决定是否派发文字任务。",
+      "files": []
+    },
+    {
+      "id": 7,
+      "prompt": "配置成功后，日常代码审查应该怎么调用？",
+      "expected_output": "主 Agent 直接调用 spawn_agent(agent_type=\"DeepSeek\")；不重复运行 setup、test、脚本或 codex exec。",
       "files": []
     }
   ]
