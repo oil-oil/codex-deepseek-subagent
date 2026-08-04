@@ -20,7 +20,7 @@ deepseek = png_data(ASSETS / "brand" / "deepseek-official.png")
 
 hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" viewBox="0 0 1200 420" role="img" aria-labelledby="title desc">
   <title id="title">codex-deepseek-subagent</title>
-  <desc id="desc">把 DeepSeek 配置成 Codex 原生子 Agent，并通过实际会话元数据完成验证。</desc>
+  <desc id="desc">将 DeepSeek 注册为 Codex 原生子 Agent，并验证实际会话路由。</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#090C16"/>
@@ -42,7 +42,7 @@ hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" vie
     <text x="0" y="0" fill="#9AAACA" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" letter-spacing="2">NATIVE MODEL ROUTING FOR CODEX</text>
     <text x="0" y="88" fill="#FFFFFF" font-size="58" font-weight="760" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">codex-deepseek</text>
     <text x="0" y="148" fill="#B8C6E4" font-size="31" font-weight="620" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">subagent</text>
-    <text x="0" y="205" fill="#C7D1E8" font-size="22" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">让 Agent 自动完成配置、验证与回滚</text>
+    <text x="0" y="205" fill="#C7D1E8" font-size="22" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">将 DeepSeek 注册为 Codex 原生子 Agent</text>
     <g transform="translate(0 246)">
       <rect width="164" height="42" rx="21" fill="#18233E" stroke="#33476E"/>
       <circle cx="24" cy="21" r="6" fill="#42D392"/>
@@ -73,19 +73,19 @@ hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="420" vie
 '''
 
 workflow = '''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
-  <title id="title">自动配置闭环</title>
-  <desc id="desc">Agent 调用管理程序，程序完成检查、凭据、配置、测试和验收。</desc>
+  <title id="title">配置和验证流程</title>
+  <desc id="desc">管理程序依次完成环境检查、凭据保存、配置修改、测试和元数据验收。</desc>
   <rect width="1200" height="330" rx="28" fill="#F5F7FB"/>
-  <text x="58" y="68" fill="#0D1730" font-size="36" font-weight="760" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">一条请求，程序闭环</text>
-  <text x="58" y="104" fill="#53627C" font-size="19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">USER INTENT → DETERMINISTIC MANAGER → VERIFIED NATIVE ROUTE</text>
+  <text x="58" y="68" fill="#0D1730" font-size="36" font-weight="760" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">配置和验证流程</text>
+  <text x="58" y="104" fill="#53627C" font-size="19" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">CHECK → CREDENTIAL → CONFIGURE → TEST → VERIFY</text>
   <g transform="translate(58 148)" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, PingFang SC, sans-serif">
     <g><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">01</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">环境检查</text></g>
     <path d="M190 56H224" stroke="#4D6BFE" stroke-width="3"/><path d="M216 48L226 56L216 64" fill="none" stroke="#4D6BFE" stroke-width="3"/>
-    <g transform="translate(238)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">02</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">钥匙串</text></g>
+    <g transform="translate(238)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">02</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">保存凭据</text></g>
     <path d="M428 56H462" stroke="#4D6BFE" stroke-width="3"/><path d="M454 48L464 56L454 64" fill="none" stroke="#4D6BFE" stroke-width="3"/>
-    <g transform="translate(476)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">03</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">原子配置</text></g>
+    <g transform="translate(476)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">03</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">写入配置</text></g>
     <path d="M666 56H700" stroke="#4D6BFE" stroke-width="3"/><path d="M692 48L702 56L692 64" fill="none" stroke="#4D6BFE" stroke-width="3"/>
-    <g transform="translate(714)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">04</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">双层测试</text></g>
+    <g transform="translate(714)"><rect width="178" height="112" rx="20" fill="#FFFFFF" stroke="#D5DCE8"/><text x="24" y="40" fill="#4D6BFE" font-size="18" font-weight="700">04</text><text x="24" y="75" fill="#14203A" font-size="22" font-weight="700">直连与派发</text></g>
     <path d="M904 56H938" stroke="#4D6BFE" stroke-width="3"/><path d="M930 48L940 56L930 64" fill="none" stroke="#4D6BFE" stroke-width="3"/>
     <g transform="translate(952)"><rect width="178" height="112" rx="20" fill="#101A31" stroke="#31476F"/><text x="24" y="40" fill="#42D392" font-size="18" font-weight="700">05</text><text x="24" y="75" fill="#FFFFFF" font-size="22" font-weight="700">元数据验收</text></g>
   </g>
