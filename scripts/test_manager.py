@@ -625,7 +625,9 @@ class ManagerTests(unittest.TestCase):
                     "managed_agent_file": True,
                     "catalog_preexisted": False,
                     "catalog_sha256": manager.sha256_bytes(paths.catalog.read_bytes()),
-                    "agent_sha256": manager.sha256_bytes(paths.agent.read_bytes()),
+                    "agent_sha256": manager.sha256_bytes(
+                        manager.expected_agent_text().encode()
+                    ),
                 },
             )
             before = {
