@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "先运行 status；缺少凭据时再索要 Key，并仅通过标准输入保存到 Keychain。配置与验收使用桌面内置运行时，管理程序按当前父模型应用 v1 明文派发设置。返回 ready 后提示重启桌面应用并新建任务。",
+      "expected_output": "先运行 status；缺少凭据时再索要 Key，并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时，管理程序按当前父模型应用 v1 明文派发设置。返回 ready 后提示重启桌面应用并新建任务。",
       "files": []
     },
     {

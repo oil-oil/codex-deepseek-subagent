@@ -20,7 +20,7 @@
 
 ## 快速开始
 
-要求：macOS、Python 3.11+、ChatGPT/Codex 桌面应用，以及 DeepSeek 官方 API Key。
+要求：macOS 或 Windows、Python 3.11+、ChatGPT/Codex 桌面应用，以及 DeepSeek 官方 API Key。
 
 1. 全局安装 Skill：
 
@@ -36,7 +36,7 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-4. Codex 会先检查状态；缺少凭据时再索要 API Key，通过标准输入保存到 macOS Keychain，然后自动配置并验收。
+4. Codex 会先检查状态；缺少凭据时再索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
 
 5. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
@@ -60,6 +60,8 @@ v1/v2 路由原因、配置位置和回滚规则见 [兼容性说明](codex-deep
 
 管理命令由 Skill 按需调用：
 
+macOS：
+
 ```bash
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --api-key-stdin --json
@@ -68,6 +70,19 @@ python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
+
+Windows：
+
+```powershell
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py status --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py setup --api-key-stdin --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py test --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py disable --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
+```
+
+管理程序会自动寻找桌面应用内置运行时。Windows 自动发现失败时，可以通过 `CODEX_DESKTOP_BIN` 指定 `codex.exe`。
 
 `setup` 或 `test` 会创建隔离验收会话；这不是日常任务的替代入口。验收必须同时满足数据库路由元数据与子 Agent 返回口令：
 
@@ -86,7 +101,7 @@ NATIVE_DEEPSEEK_OK
 
 ## 安全与回滚
 
-- API Key 只通过标准输入传入并保存到 macOS Keychain，不写入配置、临时文件或测试输出。
+- API Key 只通过标准输入传入；macOS 保存到 Keychain，Windows 保存到 Credential Manager。配置、临时文件和测试输出均不包含密钥。
 - 配置和模型目录写入前会创建备份；解析或实时测试失败会恢复本次事务。
 - 不修改主任务的顶层模型或登录方式。
 

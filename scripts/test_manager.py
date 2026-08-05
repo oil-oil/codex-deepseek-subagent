@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import io
 import json
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
@@ -42,6 +44,22 @@ class ManagerTests(unittest.TestCase):
         parsed = manager.parse_toml_text(updated)
         self.assertEqual(parsed["model_catalog_json"], "/tmp/models.json")
         self.assertEqual(parsed["features"]["multi_agent"], True)
+
+    def test_top_level_key_escapes_windows_paths(self) -> None:
+        source = '[features]\nmulti_agent = true\n'
+        windows_path = r"C:\Users\oil\.codex\models-with-deepseek.json"
+        updated = manager.set_top_level_key(source, "model_catalog_json", windows_path)
+        self.assertEqual(
+            manager.parse_toml_text(updated)["model_catalog_json"],
+            windows_path,
+        )
+        self.assertEqual(manager.top_level_key(updated, "model_catalog_json"), windows_path)
+        removed = manager.remove_top_level_key_if_value(
+            updated,
+            "model_catalog_json",
+            windows_path,
+        )
+        self.assertNotIn("model_catalog_json", manager.parse_toml_text(removed))
 
     def test_desktop_multi_agent_v2_can_be_disabled_and_removed(self) -> None:
         source = '[features]\nmulti_agent = true\nmulti_agent_v2 = true\n'
@@ -124,17 +142,82 @@ class ManagerTests(unittest.TestCase):
         invalid["auth"] = None
         self.assertIn("model_providers.deepseek.auth", manager.provider_conflicts(invalid))
 
+    def test_windows_provider_auth_uses_credential_helper(self) -> None:
+        with mock.patch.object(manager, "platform_name", return_value="windows"):
+            auth = manager.expected_provider_auth()
+            block = manager.managed_provider_block()
+        self.assertEqual(auth["command"], sys.executable)
+        self.assertEqual(auth["args"][-1], "_credential-get")
+        self.assertNotIn("/usr/bin/security", block)
+        parsed = manager.parse_toml_text(block)
+        self.assertEqual(
+            parsed["model_providers"][manager.PROVIDER]["auth"],
+            auth,
+        )
+
+    def test_credential_helper_writes_only_the_secret(self) -> None:
+        output = io.StringIO()
+        with mock.patch.object(
+            manager.sys,
+            "argv",
+            [str(SCRIPT), "_credential-get"],
+        ), mock.patch.object(
+            manager,
+            "read_credential_key",
+            return_value="sk-test-placeholder",
+        ), redirect_stdout(output):
+            exit_code = manager.main()
+        self.assertEqual(exit_code, 0)
+        self.assertEqual(output.getvalue(), "sk-test-placeholder")
+
+    def test_windows_credential_backend_delegates_to_credential_manager(self) -> None:
+        with mock.patch.object(
+            manager,
+            "platform_name",
+            return_value="windows",
+        ), mock.patch.object(
+            manager,
+            "_windows_read_credential",
+            return_value="sk-test",
+        ) as read, mock.patch.object(
+            manager,
+            "_windows_store_credential",
+        ) as store, mock.patch.object(
+            manager,
+            "_windows_remove_credential",
+            return_value=True,
+        ) as remove:
+            self.assertEqual(manager.credential_backend(), "windows-credential-manager")
+            self.assertTrue(manager.credential_has_key())
+            manager.store_credential_key("sk-test")
+            self.assertTrue(manager.remove_credential_key())
+        read.assert_called()
+        store.assert_called_once_with("sk-test")
+        remove.assert_called_once_with()
+
+    def test_windows_desktop_codex_falls_back_to_path(self) -> None:
+        with mock.patch.dict(manager.os.environ, {}, clear=True), mock.patch.object(
+            manager,
+            "platform_name",
+            return_value="windows",
+        ), mock.patch.object(
+            manager.shutil,
+            "which",
+            side_effect=[r"C:\Tools\codex.exe", None],
+        ):
+            self.assertEqual(manager.find_desktop_codex(), r"C:\Tools\codex.exe")
+
     def test_static_status_is_configured_with_complete_codex_home(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
-            "keychain_has_key",
+            "credential_has_key",
             return_value=True,
         ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
-                f'model_catalog_json = "{paths.catalog}"\n'
+                f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 "[features]\n"
                 "multi_agent_v2 = false\n"
                 + manager.managed_provider_block()
@@ -308,20 +391,44 @@ class ManagerTests(unittest.TestCase):
     def test_operation_lock_times_out_when_another_operation_holds_it(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
-            paths.state_dir.mkdir(parents=True, exist_ok=True)
-            with (paths.state_dir / "manager.lock").open("a+") as held:
-                manager.fcntl.flock(held.fileno(), manager.fcntl.LOCK_EX)
+            with mock.patch.object(
+                manager,
+                "try_acquire_file_lock",
+                return_value=False,
+            ), mock.patch.object(manager.time, "sleep"):
                 with self.assertRaises(manager.ManagerError) as raised:
                     with manager.operation_lock(paths, timeout_seconds=0.01):
                         self.fail("锁已被占用时不应进入操作区")
             self.assertEqual(raised.exception.code, "operation_in_progress")
 
+    def test_windows_file_lock_adapter_acquires_and_releases_one_byte(self) -> None:
+        fake_msvcrt = SimpleNamespace(
+            LK_NBLCK=1,
+            LK_UNLCK=2,
+            calls=[],
+        )
+
+        def locking(fd, mode, size):
+            fake_msvcrt.calls.append((fd, mode, size))
+
+        fake_msvcrt.locking = locking
+        with tempfile.TemporaryDirectory() as directory:
+            lock_path = Path(directory) / "manager.lock"
+            with lock_path.open("a+") as lock_file, mock.patch.object(
+                manager,
+                "fcntl",
+                None,
+            ), mock.patch.object(manager, "msvcrt", fake_msvcrt):
+                self.assertTrue(manager.try_acquire_file_lock(lock_file))
+                manager.release_file_lock(lock_file)
+        self.assertEqual([call[1:] for call in fake_msvcrt.calls], [(1, 1), (2, 1)])
+
     def test_onboarding_requests_credential_before_writing_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
-            "keychain_available",
+            "credential_available",
             return_value=True,
-        ), mock.patch.object(manager, "keychain_has_key", return_value=False):
+        ), mock.patch.object(manager, "credential_has_key", return_value=False):
             paths = manager.resolve_paths(directory)
             result = manager.setup(paths, "desktop-codex", False, False)
             self.assertEqual(result, {"status": "credential_missing", "credential": "deepseek_api_key"})
@@ -331,9 +438,9 @@ class ManagerTests(unittest.TestCase):
     def test_skip_live_test_does_not_probe_diagnostic_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
-            "keychain_available",
+            "credential_available",
             return_value=True,
-        ), mock.patch.object(manager, "keychain_has_key", return_value=True), mock.patch.object(
+        ), mock.patch.object(manager, "credential_has_key", return_value=True), mock.patch.object(
             manager,
             "install",
             return_value={"backup": "/tmp/backup", "adopted_existing": False},
@@ -361,8 +468,8 @@ class ManagerTests(unittest.TestCase):
                 mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
                 mock.patch.object(manager, "load_base_catalog", return_value=base),
                 mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
-                mock.patch.object(manager, "keychain_available", return_value=True),
-                mock.patch.object(manager, "keychain_has_key", return_value=True),
+                mock.patch.object(manager, "credential_available", return_value=True),
+                mock.patch.object(manager, "credential_has_key", return_value=True),
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 first = manager.setup(paths, "codex", False, True)
@@ -405,7 +512,7 @@ class ManagerTests(unittest.TestCase):
                     "load_base_catalog",
                     return_value={"models": [{"slug": "gpt-5.6-sol"}]},
                 ),
-                mock.patch.object(manager, "keychain_has_key", return_value=False),
+                mock.patch.object(manager, "credential_has_key", return_value=False),
             ]
             with patches[0], patches[1], patches[2]:
                 manager.install(paths, "codex")
@@ -425,7 +532,7 @@ class ManagerTests(unittest.TestCase):
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
-                f'model_catalog_json = "{paths.catalog}"\n'
+                f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 + manager.managed_provider_block()
             )
             paths.catalog.write_text(
@@ -461,7 +568,7 @@ class ManagerTests(unittest.TestCase):
                     "load_base_catalog",
                     return_value={"models": [{"slug": "gpt-5.6-sol"}]},
                 ),
-                mock.patch.object(manager, "keychain_has_key", return_value=False),
+                mock.patch.object(manager, "credential_has_key", return_value=False),
             ]
             with patches[0], patches[1], patches[2]:
                 manager.install(paths, "codex")
@@ -479,7 +586,7 @@ class ManagerTests(unittest.TestCase):
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
-                f'model_catalog_json = "{paths.catalog}"\n'
+                f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 + manager.managed_provider_block()
             )
             paths.catalog.write_text(json.dumps({"models": [{"slug": manager.MODEL}]}) + "\n")
@@ -532,8 +639,8 @@ class ManagerTests(unittest.TestCase):
                 mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
                 mock.patch.object(manager, "load_base_catalog", side_effect=lambda *_: copy.deepcopy(base)),
                 mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
-                mock.patch.object(manager, "keychain_available", return_value=True),
-                mock.patch.object(manager, "keychain_has_key", return_value=True),
+                mock.patch.object(manager, "credential_available", return_value=True),
+                mock.patch.object(manager, "credential_has_key", return_value=True),
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 manager.setup(paths, "codex", False, True)
@@ -558,7 +665,7 @@ class ManagerTests(unittest.TestCase):
                 f"{manager.ROLE_BEGIN}\n"
                 "[agents.DeepSeek]\n"
                 'description = "legacy role registration"\n'
-                f"config_file = \"{paths.agent}\"\n"
+                f"config_file = {manager.toml_string(str(paths.agent))}\n"
                 f"{manager.ROLE_END}\n"
             )
             paths.config.write_text('model = "gpt-5.6-sol"\n' + legacy_role)
@@ -587,7 +694,7 @@ class ManagerTests(unittest.TestCase):
                 'model = "gpt-5.6-sol"\n'
                 "[agents.DeepSeek]\n"
                 'description = "legacy role registration"\n'
-                f'config_file = "{paths.agent}"\n'
+                f"config_file = {manager.toml_string(str(paths.agent))}\n"
             )
             patches = [
                 mock.patch.object(
@@ -610,20 +717,20 @@ class ManagerTests(unittest.TestCase):
     def test_install_removes_quoted_legacy_role_and_status_requires_absence(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
-            "keychain_has_key",
+            "credential_has_key",
             return_value=True,
         ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
                 'model = "gpt-5.6-sol"\n'
-                f'model_catalog_json = "{paths.catalog}"\n'
+                f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 "[features]\n"
                 "multi_agent_v2 = false\n"
                 + manager.managed_provider_block()
                 + '\n[agents."DeepSeek"]\n'
                 'description = "legacy role registration"\n'
-                f'config_file = "{paths.agent}"\n'
+                f"config_file = {manager.toml_string(str(paths.agent))}\n"
             )
             paths.catalog.write_text(
                 json.dumps(

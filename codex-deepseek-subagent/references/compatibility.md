@@ -3,6 +3,7 @@
 ## 支持范围
 
 - macOS
+- Windows
 - Python 3.11+
 - ChatGPT/Codex 桌面应用至少启动过一次
 - DeepSeek 官方 Responses API
@@ -17,13 +18,15 @@
 - 合并模型目录：`$CODEX_HOME/models-with-deepseek.json`
 - 自定义角色：`$CODEX_HOME/agents/DeepSeek.toml`（默认即 `~/.codex/agents/DeepSeek.toml`）
 - 管理状态与备份：`$CODEX_HOME/codex-deepseek-subagent/`
-- macOS Keychain 服务：`codex-deepseek-api-key`
+- 系统凭据目标：`codex-deepseek-api-key`
+  - macOS：Keychain
+  - Windows：Credential Manager
 
 程序不修改顶层 `model` 或顶层 `model_provider`，主任务仍使用用户原来的模型和登录方式。
 
 ## 原生派发兼容性
 
-检查和验收只使用桌面应用内置运行时，不使用 PATH 中的独立 CLI。版本号仅作诊断；兼容性由模型目录解析、DeepSeek 直连、原生派发、返回口令和数据库元数据共同决定。
+检查和验收优先使用桌面应用内置运行时。Windows 无法从常见安装位置发现运行时时，会尝试 PATH 中的 `codex.exe`；仍无法发现时需要通过 `CODEX_DESKTOP_BIN` 明确指定。版本号仅作诊断；兼容性由模型目录解析、DeepSeek 直连、原生派发、返回口令和数据库元数据共同决定。
 
 父模型从桌面当前配置动态读取。管理程序会把 `features.multi_agent_v2` 设为 `false`，并把该父模型的 `multi_agent_version` 固定为 `v1`，避免桌面端 v2 加密跨 Provider 子任务正文。父模型变化后运行 `repair`。
 
@@ -52,7 +55,7 @@ spawn_agent(agent_type="DeepSeek", fork_turns="none", ...)
 
 ## API Key
 
-API Key 可由用户在聊天中提供。管理程序从标准输入读取，不写入命令参数、临时文件、配置文件或测试结果，随后保存到 macOS Keychain。
+API Key 可由用户在聊天中提供。管理程序从标准输入读取，不写入命令参数、临时文件、配置文件或测试结果。macOS 将密钥保存到 Keychain，Windows 将密钥保存到 Credential Manager。
 
 不要在最终回复、日志摘要、异常信息或测试夹具中重复 API Key。
 

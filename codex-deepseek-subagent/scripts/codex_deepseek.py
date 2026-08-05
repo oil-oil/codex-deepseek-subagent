@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import fcntl
 import getpass
 import hashlib
 import json
@@ -24,6 +23,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+try:
+    import fcntl
+except ImportError:  # Windows
+    fcntl = None
+
+try:
+    import msvcrt
+except ImportError:  # macOS / Linux
+    msvcrt = None
+
 
 MODEL = "deepseek-v4-flash"
 PROVIDER = "deepseek"
@@ -34,7 +43,7 @@ DESKTOP_MULTI_AGENT_V2 = False
 MAX_STATE_DATABASES = 32
 METADATA_WAIT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 5.0
-KEYCHAIN_SERVICE = "codex-deepseek-api-key"
+CREDENTIAL_TARGET = "codex-deepseek-api-key"
 OFFICIAL_SETUP_URL = "https://cdn.deepseek.com/api-docs/codex-deepseek-setup-en.sh"
 PROVIDER_BEGIN = "# BEGIN CODEX-DEEPSEEK-SUBAGENT PROVIDER"
 PROVIDER_END = "# END CODEX-DEEPSEEK-SUBAGENT PROVIDER"
@@ -43,6 +52,11 @@ ROLE_END = "# END CODEX-DEEPSEEK-SUBAGENT ROLE"
 DESKTOP_CODEX_CANDIDATES = (
     Path("/Applications/ChatGPT.app/Contents/Resources/codex"),
     Path("/Applications/Codex.app/Contents/Resources/codex"),
+)
+WINDOWS_CODEX_RELATIVE_CANDIDATES = (
+    Path("Programs") / "Codex" / "resources" / "codex.exe",
+    Path("Programs") / "OpenAI" / "Codex" / "resources" / "codex.exe",
+    Path("Codex") / "resources" / "codex.exe",
 )
 
 
@@ -111,13 +125,46 @@ def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
         raise
 
 
+def platform_name() -> str:
+    if sys.platform == "darwin":
+        return "macos"
+    if os.name == "nt" or sys.platform == "win32":
+        return "windows"
+    return "unsupported"
+
+
 def find_desktop_codex() -> str:
     configured = os.environ.get("CODEX_DESKTOP_BIN")
-    candidates = (Path(configured).expanduser(),) if configured else DESKTOP_CODEX_CANDIDATES
+    if configured:
+        candidate = Path(configured).expanduser()
+        if candidate.is_file():
+            return str(candidate.resolve())
+        raise ManagerError(
+            "desktop_codex_missing",
+            f"CODEX_DESKTOP_BIN 指向的文件不存在：{candidate}",
+        )
+
+    candidates: list[Path] = []
+    if platform_name() == "macos":
+        candidates.extend(DESKTOP_CODEX_CANDIDATES)
+    elif platform_name() == "windows":
+        for variable in ("LOCALAPPDATA", "PROGRAMFILES", "PROGRAMFILES(X86)"):
+            root = os.environ.get(variable)
+            if root:
+                candidates.extend(Path(root) / relative for relative in WINDOWS_CODEX_RELATIVE_CANDIDATES)
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate.resolve())
-    raise ManagerError("desktop_codex_missing", "没有找到 Codex 桌面应用内置运行时。请先安装或启动桌面应用。")
+
+    if platform_name() == "windows":
+        discovered = shutil.which("codex.exe") or shutil.which("codex")
+        if discovered:
+            return discovered
+
+    raise ManagerError(
+        "desktop_codex_missing",
+        "没有找到 Codex 桌面应用内置运行时。请先安装或启动桌面应用；Windows 自动发现失败时设置 CODEX_DESKTOP_BIN。",
+    )
 
 
 def codex_version_text(codex_bin: str) -> str:
@@ -128,39 +175,53 @@ def codex_version_text(codex_bin: str) -> str:
     return text
 
 
-def keychain_account() -> str:
+def credential_account() -> str:
     return getpass.getuser()
 
 
-def keychain_available() -> bool:
-    return sys.platform == "darwin" and Path("/usr/bin/security").is_file()
+def credential_backend() -> str | None:
+    current = platform_name()
+    if current == "macos" and Path("/usr/bin/security").is_file():
+        return "macos-keychain"
+    if current == "windows":
+        return "windows-credential-manager"
+    return None
 
 
-def keychain_has_key() -> bool:
-    if not keychain_available():
-        return False
+def credential_available() -> bool:
+    return credential_backend() is not None
+
+
+def _macos_read_credential() -> str | None:
     proc = subprocess.run(
-        ["/usr/bin/security", "find-generic-password", "-a", keychain_account(), "-s", KEYCHAIN_SERVICE],
-        stdout=subprocess.DEVNULL,
+        [
+            "/usr/bin/security",
+            "find-generic-password",
+            "-a",
+            credential_account(),
+            "-s",
+            CREDENTIAL_TARGET,
+            "-w",
+        ],
+        stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
+        text=True,
     )
-    return proc.returncode == 0
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip() or None
 
 
-def store_keychain_key(secret: str) -> None:
-    if not keychain_available():
-        raise ManagerError("unsupported_platform", "当前版本只支持 macOS Keychain。")
-    if not secret.startswith("sk-"):
-        raise ManagerError("invalid_api_key", "DeepSeek API Key 应以 sk- 开头。")
+def _macos_store_credential(secret: str) -> None:
     proc = subprocess.run(
         [
             "/usr/bin/security",
             "add-generic-password",
             "-U",
             "-a",
-            keychain_account(),
+            credential_account(),
             "-s",
-            KEYCHAIN_SERVICE,
+            CREDENTIAL_TARGET,
             "-w",
             secret,
         ],
@@ -169,18 +230,151 @@ def store_keychain_key(secret: str) -> None:
         text=True,
     )
     if proc.returncode != 0:
-        raise ManagerError("keychain_write_failed", "无法把 API Key 写入 macOS Keychain。")
+        raise ManagerError("credential_write_failed", "无法把 API Key 写入 macOS Keychain。")
 
 
-def remove_keychain_key() -> bool:
-    if not keychain_available() or not keychain_has_key():
-        return False
+def _macos_remove_credential() -> bool:
     proc = subprocess.run(
-        ["/usr/bin/security", "delete-generic-password", "-a", keychain_account(), "-s", KEYCHAIN_SERVICE],
+        ["/usr/bin/security", "delete-generic-password", "-a", credential_account(), "-s", CREDENTIAL_TARGET],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
     return proc.returncode == 0
+
+
+def _windows_credential_api():
+    import ctypes
+    from ctypes import wintypes
+
+    class CredentialW(ctypes.Structure):
+        _fields_ = [
+            ("Flags", wintypes.DWORD),
+            ("Type", wintypes.DWORD),
+            ("TargetName", wintypes.LPWSTR),
+            ("Comment", wintypes.LPWSTR),
+            ("LastWritten", wintypes.FILETIME),
+            ("CredentialBlobSize", wintypes.DWORD),
+            ("CredentialBlob", ctypes.POINTER(ctypes.c_ubyte)),
+            ("Persist", wintypes.DWORD),
+            ("AttributeCount", wintypes.DWORD),
+            ("Attributes", ctypes.c_void_p),
+            ("TargetAlias", wintypes.LPWSTR),
+            ("UserName", wintypes.LPWSTR),
+        ]
+
+    advapi32 = ctypes.WinDLL("Advapi32.dll", use_last_error=True)
+    advapi32.CredReadW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.DWORD,
+        wintypes.DWORD,
+        ctypes.POINTER(ctypes.POINTER(CredentialW)),
+    ]
+    advapi32.CredReadW.restype = wintypes.BOOL
+    advapi32.CredWriteW.argtypes = [ctypes.POINTER(CredentialW), wintypes.DWORD]
+    advapi32.CredWriteW.restype = wintypes.BOOL
+    advapi32.CredDeleteW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD]
+    advapi32.CredDeleteW.restype = wintypes.BOOL
+    advapi32.CredFree.argtypes = [ctypes.c_void_p]
+    advapi32.CredFree.restype = None
+    return ctypes, CredentialW, advapi32
+
+
+def _windows_read_credential() -> str | None:
+    ctypes, credential_type, advapi32 = _windows_credential_api()
+    credential = ctypes.POINTER(credential_type)()
+    if not advapi32.CredReadW(CREDENTIAL_TARGET, 1, 0, ctypes.byref(credential)):
+        error = ctypes.get_last_error()
+        if error == 1168:
+            return None
+        raise ManagerError(
+            "credential_read_failed",
+            f"无法读取 Windows Credential Manager（错误 {error}）。",
+        )
+    try:
+        raw = ctypes.string_at(
+            credential.contents.CredentialBlob,
+            credential.contents.CredentialBlobSize,
+        )
+        return raw.decode("utf-8")
+    finally:
+        advapi32.CredFree(credential)
+
+
+def _windows_store_credential(secret: str) -> None:
+    ctypes, credential_type, advapi32 = _windows_credential_api()
+    raw = secret.encode("utf-8")
+    blob = (ctypes.c_ubyte * len(raw)).from_buffer_copy(raw)
+    credential = credential_type()
+    credential.Flags = 0
+    credential.Type = 1
+    credential.TargetName = CREDENTIAL_TARGET
+    credential.CredentialBlobSize = len(raw)
+    credential.CredentialBlob = ctypes.cast(blob, ctypes.POINTER(ctypes.c_ubyte))
+    credential.Persist = 2
+    credential.UserName = credential_account()
+    if not advapi32.CredWriteW(ctypes.byref(credential), 0):
+        error = ctypes.get_last_error()
+        raise ManagerError(
+            "credential_write_failed",
+            f"无法把 API Key 写入 Windows Credential Manager（错误 {error}）。",
+        )
+
+
+def _windows_remove_credential() -> bool:
+    ctypes, _, advapi32 = _windows_credential_api()
+    if advapi32.CredDeleteW(CREDENTIAL_TARGET, 1, 0):
+        return True
+    error = ctypes.get_last_error()
+    if error == 1168:
+        return False
+    raise ManagerError(
+        "credential_delete_failed",
+        f"无法从 Windows Credential Manager 删除 API Key（错误 {error}）。",
+    )
+
+
+def read_credential_key() -> str | None:
+    backend = credential_backend()
+    if backend == "macos-keychain":
+        return _macos_read_credential()
+    if backend == "windows-credential-manager":
+        return _windows_read_credential()
+    raise ManagerError("unsupported_platform", "当前只支持 macOS 和 Windows 系统凭据库。")
+
+
+def credential_has_key() -> bool:
+    if not credential_available():
+        return False
+    return read_credential_key() is not None
+
+
+def store_credential_key(secret: str) -> None:
+    if not secret.startswith("sk-"):
+        raise ManagerError("invalid_api_key", "DeepSeek API Key 应以 sk- 开头。")
+    backend = credential_backend()
+    if backend == "macos-keychain":
+        _macos_store_credential(secret)
+        return
+    if backend == "windows-credential-manager":
+        _windows_store_credential(secret)
+        return
+    raise ManagerError("unsupported_platform", "当前只支持 macOS 和 Windows 系统凭据库。")
+
+
+def remove_credential_key() -> bool:
+    if not credential_available() or not credential_has_key():
+        return False
+    if credential_backend() == "macos-keychain":
+        return _macos_remove_credential()
+    return _windows_remove_credential()
+
+
+def toml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
+
+
+def toml_string_array(values: list[str]) -> str:
+    return "[" + ", ".join(toml_string(value) for value in values) + "]"
 
 
 def parse_toml_text(text: str) -> dict[str, Any]:
@@ -226,19 +420,13 @@ def remove_toml_table(text: str, table: str) -> str:
 
 
 def top_level_key(text: str, key: str) -> str | None:
-    for line in text.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("["):
-            break
-        match = re.match(rf"{re.escape(key)}\s*=\s*\"([^\"]+)\"", stripped)
-        if match:
-            return match.group(1)
-    return None
+    value = parse_toml_text(text).get(key)
+    return value if isinstance(value, str) else None
 
 
 def set_top_level_key(text: str, key: str, value: str) -> str:
     lines = text.splitlines()
-    assignment = f'{key} = "{value}"'
+    assignment = f"{key} = {toml_string(value)}"
     first_table = next((i for i, line in enumerate(lines) if line.strip().startswith("[")), len(lines))
     key_pattern = re.compile(rf"^\s*{re.escape(key)}\s*=")
     for index in range(first_table):
@@ -254,8 +442,16 @@ def set_top_level_key(text: str, key: str, value: str) -> str:
 def remove_top_level_key_if_value(text: str, key: str, expected: str) -> str:
     lines = text.splitlines()
     first_table = next((i for i, line in enumerate(lines) if line.strip().startswith("[")), len(lines))
-    pattern = re.compile(rf'^\s*{re.escape(key)}\s*=\s*"{re.escape(expected)}"\s*$')
-    kept = [line for index, line in enumerate(lines) if not (index < first_table and pattern.match(line))]
+    kept: list[str] = []
+    for index, line in enumerate(lines):
+        matches = False
+        if index < first_table:
+            try:
+                matches = tomllib.loads(line).get(key) == expected
+            except tomllib.TOMLDecodeError:
+                matches = False
+        if not matches:
+            kept.append(line)
     return "\n".join(kept).rstrip() + "\n"
 
 
@@ -319,7 +515,7 @@ Do not spawn additional subagents unless the user or parent explicitly asks for 
 
 
 def managed_provider_block() -> str:
-    account = keychain_account().replace("\\", "\\\\").replace('"', '\\"')
+    auth = expected_provider_auth()
     return f'''
 {PROVIDER_BEGIN}
 [model_providers.{PROVIDER}]
@@ -328,8 +524,8 @@ base_url = "https://api.deepseek.com/"
 wire_api = "responses"
 
 [model_providers.{PROVIDER}.auth]
-command = "/usr/bin/security"
-args = ["find-generic-password", "-a", "{account}", "-s", "{KEYCHAIN_SERVICE}", "-w"]
+command = {toml_string(auth["command"])}
+args = {toml_string_array(auth["args"])}
 timeout_ms = 5000
 refresh_interval_ms = 0
 {PROVIDER_END}
@@ -337,14 +533,21 @@ refresh_interval_ms = 0
 
 
 def expected_provider_auth() -> dict[str, Any]:
+    if credential_backend() == "windows-credential-manager":
+        return {
+            "command": sys.executable,
+            "args": [str(Path(__file__).resolve()), "_credential-get"],
+            "timeout_ms": 5000,
+            "refresh_interval_ms": 0,
+        }
     return {
         "command": "/usr/bin/security",
         "args": [
             "find-generic-password",
             "-a",
-            keychain_account(),
+            credential_account(),
             "-s",
-            KEYCHAIN_SERVICE,
+            CREDENTIAL_TARGET,
             "-w",
         ],
         "timeout_ms": 5000,
@@ -641,7 +844,8 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         "config_exists": paths.config.is_file(),
         "catalog_exists": paths.catalog.is_file(),
         "agent_exists": paths.agent.is_file(),
-        "credential_present": keychain_has_key(),
+        "credential_backend": credential_backend(),
+        "credential_present": credential_has_key(),
         "manifest_exists": paths.manifest.is_file(),
     }
     errors: list[str] = []
@@ -780,7 +984,7 @@ def query_child_metadata(
             return None
         try:
             with sqlite3.connect(
-                f"file:{state_db}?mode=ro",
+                f"{state_db.resolve().as_uri()}?mode=ro",
                 uri=True,
                 timeout=0.05,
             ) as connection:
@@ -924,16 +1128,16 @@ def restore_backup(paths: Paths, backup: Path) -> None:
 
 
 def setup(paths: Paths, codex_bin: str, api_key_stdin: bool, skip_live_test: bool) -> dict[str, Any]:
-    if not keychain_available():
-        raise ManagerError("unsupported", "当前版本只支持 macOS Keychain。")
+    if not credential_available():
+        raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
-    if not keychain_has_key():
+    if not credential_has_key():
         if not api_key_stdin:
             return result("credential_missing", credential="deepseek_api_key")
         secret = sys.stdin.readline().strip()
         if not secret:
             raise ManagerError("credential_missing", "标准输入中没有 API Key。")
-        store_keychain_key(secret)
+        store_credential_key(secret)
         secret = ""
         credential_created = True
 
@@ -953,7 +1157,7 @@ def setup(paths: Paths, codex_bin: str, api_key_stdin: bool, skip_live_test: boo
         if install_result and install_result.get("backup"):
             restore_backup(paths, Path(install_result["backup"]))
         if credential_created:
-            remove_keychain_key()
+            remove_credential_key()
         raise
 
 
@@ -994,7 +1198,7 @@ def disable(paths: Paths) -> dict[str, Any]:
         "disabled",
         changed=changed,
         agent_preserved=not bool(manifest.get("managed_agent_file")),
-        credential_preserved=keychain_has_key(),
+        credential_preserved=credential_has_key(),
     )
 
 
@@ -1037,7 +1241,7 @@ def uninstall(paths: Paths, remove_credential: bool) -> dict[str, Any]:
     except Exception:
         restore_backup(paths, backup)
         raise
-    removed_credential = remove_keychain_key() if remove_credential else False
+    removed_credential = remove_credential_key() if remove_credential else False
     return result(
         "uninstalled",
         disabled=disabled,
@@ -1047,30 +1251,71 @@ def uninstall(paths: Paths, remove_credential: bool) -> dict[str, Any]:
     )
 
 
+def try_acquire_file_lock(lock_file) -> bool:
+    if fcntl is not None:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return True
+        except BlockingIOError:
+            return False
+    if msvcrt is not None:
+        lock_file.seek(0)
+        if lock_file.read(1) == "":
+            lock_file.seek(0)
+            lock_file.write("\0")
+            lock_file.flush()
+        lock_file.seek(0)
+        try:
+            msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            return True
+        except OSError:
+            return False
+    raise ManagerError("unsupported_platform", "当前平台没有可用的文件锁实现。")
+
+
+def release_file_lock(lock_file) -> None:
+    if fcntl is not None:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+        return
+    if msvcrt is not None:
+        lock_file.seek(0)
+        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+
+
 @contextmanager
 def operation_lock(paths: Paths, timeout_seconds: float = LOCK_WAIT_SECONDS):
     paths.state_dir.mkdir(parents=True, exist_ok=True)
     with (paths.state_dir / "manager.lock").open("a+") as lock_file:
         deadline = time.monotonic() + timeout_seconds
         while True:
-            try:
-                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            if try_acquire_file_lock(lock_file):
                 break
-            except BlockingIOError as exc:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0:
-                    raise ManagerError(
-                        "operation_in_progress",
-                        "另一个 DeepSeek 配置操作仍在进行，请稍后重试。",
-                    ) from exc
-                time.sleep(min(0.1, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise ManagerError(
+                    "operation_in_progress",
+                    "另一个 DeepSeek 配置操作仍在进行，请稍后重试。",
+                )
+            time.sleep(min(0.1, remaining))
         try:
             yield
         finally:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            release_file_lock(lock_file)
 
 
 def main() -> int:
+    if sys.argv[1:] == ["_credential-get"]:
+        try:
+            secret = read_credential_key()
+            if not secret:
+                print("DeepSeek API Key 不存在。", file=sys.stderr)
+                return 2
+            sys.stdout.write(secret)
+            return 0
+        except ManagerError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("status", "setup", "test", "repair", "disable", "uninstall"))
     parser.add_argument("--codex-home")

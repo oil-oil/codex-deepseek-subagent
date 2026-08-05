@@ -5,7 +5,7 @@ description: 仅在用户要求配置、检查、测试、修复、停用或卸�
 
 # Codex DeepSeek 子 Agent
 
-本 Skill 只维护配置，不承接日常用户任务。确定性的文件、模型目录和凭据操作交给 `scripts/codex_deepseek.py`；不要手动改 TOML、JSON、Agent 文件或钥匙串。
+本 Skill 只维护配置，不承接日常用户任务。确定性的文件、模型目录和凭据操作交给 `scripts/codex_deepseek.py`；不要手动改 TOML、JSON、Agent 文件或系统凭据库。
 
 ## 关键契约
 
@@ -33,7 +33,7 @@ description: 仅在用户要求配置、检查、测试、修复、停用或卸�
 
 ## 管理命令
 
-入口：
+入口。macOS 使用 `python3`，Windows 使用 `py -3`：
 
 ```text
 python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
