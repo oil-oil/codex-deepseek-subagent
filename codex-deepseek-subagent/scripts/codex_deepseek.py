@@ -107,6 +107,11 @@ def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+def sha256_text_file(path: Path) -> str:
+    normalized = path.read_text().replace("\r\n", "\n").replace("\r", "\n")
+    return sha256_bytes(normalized.encode())
+
+
 def atomic_write(path: Path, data: bytes, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -1166,7 +1171,7 @@ def disable(paths: Paths) -> dict[str, Any]:
         raise ManagerError("not_managed", "没有找到本 Skill 的管理记录，拒绝修改现有配置。")
     manifest = read_manifest(paths)
     if manifest.get("managed_agent_file") and paths.agent.is_file():
-        if sha256_bytes(paths.agent.read_bytes()) != manifest.get("agent_sha256"):
+        if sha256_text_file(paths.agent) != manifest.get("agent_sha256"):
             raise ManagerError(
                 "conflict",
                 "DeepSeek Agent 文件已被修改，拒绝停用。",

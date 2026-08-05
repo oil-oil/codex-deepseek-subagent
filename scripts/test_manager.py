@@ -122,6 +122,30 @@ class ManagerTests(unittest.TestCase):
         self.assertIn("text-only", text)
         self.assertIn("Do not spawn additional subagents", text)
 
+    def test_disable_accepts_windows_line_endings_in_managed_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "credential_has_key",
+            return_value=False,
+        ):
+            paths = manager.resolve_paths(directory)
+            paths.agent.parent.mkdir(parents=True, exist_ok=True)
+            paths.agent.write_bytes(
+                manager.expected_agent_text().replace("\n", "\r\n").encode()
+            )
+            manager.write_manifest(
+                paths,
+                {
+                    "managed_agent_file": True,
+                    "agent_sha256": manager.sha256_bytes(
+                        manager.expected_agent_text().encode()
+                    ),
+                },
+            )
+            result = manager.disable(paths)
+            self.assertTrue(result["changed"])
+            self.assertFalse(paths.agent.exists())
+
     def test_provider_auth_validation_checks_every_field(self) -> None:
         provider = {
             "name": "DeepSeek",
