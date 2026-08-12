@@ -34,7 +34,23 @@ except ImportError:  # macOS / Linux
     msvcrt = None
 
 
-MODEL = "deepseek-v4-flash"
+FLASH_MODEL = "deepseek-v4-flash"
+PRO_MODEL = "deepseek-v4-pro"
+SUPPORTED_MODELS = (FLASH_MODEL, PRO_MODEL)
+# 保留旧常量，供旧版测试夹具和 schema 迁移识别；运行时不再依赖它选模型。
+MODEL = FLASH_MODEL
+MODEL_OPTIONS = [
+    {
+        "id": FLASH_MODEL,
+        "label": "DeepSeek V4 Flash",
+        "description": "速度更快、成本更低，适合日常编码和高频任务。",
+    },
+    {
+        "id": PRO_MODEL,
+        "label": "DeepSeek V4 Pro",
+        "description": "能力更强，适合复杂编码、架构分析和高难度 Agent 任务。",
+    },
+]
 PROVIDER = "deepseek"
 ROLE = "DeepSeek"
 EFFORT = "high"
@@ -503,10 +519,10 @@ def remove_table_bool_if_value(text: str, table: str, key: str, expected: bool) 
     return "\n".join(kept).rstrip() + "\n"
 
 
-def expected_agent_text() -> str:
+def expected_agent_text(model: str = MODEL) -> str:
     return f'''name = "{ROLE}"
 description = "Text-only DeepSeek subagent for coding, repository research, review, and verification. Do not use it for image, video, screenshot, or other visual inspection; the parent agent must inspect visual inputs and pass the findings as text."
-model = "{MODEL}"
+model = "{model}"
 model_provider = "{PROVIDER}"
 model_reasoning_effort = "{EFFORT}"
 developer_instructions = """
@@ -595,7 +611,7 @@ def compatible_existing(parsed: dict[str, Any], paths: Paths) -> tuple[bool, lis
     return not issues, issues
 
 
-def fetch_official_deepseek_model() -> dict[str, Any]:
+def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
     request = urllib.request.Request(
         OFFICIAL_SETUP_URL,
         headers={"User-Agent": "codex-deepseek-subagent/1.0"},
@@ -616,10 +632,40 @@ def fetch_official_deepseek_model() -> dict[str, Any]:
         payload = json.loads(match.group(1))
     except json.JSONDecodeError as exc:
         raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录不是有效 JSON。") from exc
-    for model in payload.get("models", []):
-        if model.get("slug") == MODEL:
-            return model
-    raise ManagerError("official_model_missing", f"官方目录中没有 {MODEL}。")
+    models = {
+        model.get("slug"): model
+        for model in payload.get("models", [])
+        if model.get("slug") in SUPPORTED_MODELS
+    }
+    missing = [model for model in SUPPORTED_MODELS if model not in models]
+    if missing:
+        raise ManagerError(
+            "official_model_missing",
+            f"DeepSeek 官方目录缺少模型：{', '.join(missing)}。",
+        )
+    return models
+
+
+def configured_deepseek_model(paths: Paths) -> str | None:
+    manifest = read_manifest(paths)
+    selected = manifest.get("selected_model")
+    if selected in SUPPORTED_MODELS:
+        return selected
+    if manifest and manifest.get("schema_version", 1) < 4:
+        return FLASH_MODEL
+    return None
+
+
+def resolve_selected_model(paths: Paths, requested: str | None) -> str | None:
+    if requested is not None:
+        if requested not in SUPPORTED_MODELS:
+            raise ManagerError(
+                "unsupported_model",
+                f"不支持模型 {requested}。",
+                {"model_options": MODEL_OPTIONS},
+            )
+        return requested
+    return configured_deepseek_model(paths)
 
 
 def run_codex_models(codex_bin: str, paths: Paths) -> dict[str, Any]:
@@ -654,9 +700,16 @@ def load_base_catalog(codex_bin: str, paths: Paths, config: dict[str, Any]) -> d
     return run_codex_models(codex_bin, paths)
 
 
-def merged_catalog(base: dict[str, Any], deepseek_model: dict[str, Any], parent_model: str) -> dict[str, Any]:
-    models = [model for model in base.get("models", []) if model.get("slug") != MODEL]
-    models.append(deepseek_model)
+def merged_catalog(
+    base: dict[str, Any],
+    deepseek_models: dict[str, dict[str, Any]],
+    parent_model: str,
+) -> dict[str, Any]:
+    models = [
+        model for model in base.get("models", [])
+        if model.get("slug") not in SUPPORTED_MODELS
+    ]
+    models.extend(deepseek_models[slug] for slug in SUPPORTED_MODELS)
     parent_found = False
     for model in models:
         if model.get("slug") == parent_model:
@@ -700,7 +753,7 @@ def read_manifest(paths: Paths) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
+def install(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]:
     paths.home.mkdir(parents=True, exist_ok=True)
     config_text = paths.config.read_text() if paths.config.is_file() else ""
     parsed = parse_toml_text(config_text) if config_text.strip() else {}
@@ -712,8 +765,17 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
     compatible, conflicts = compatible_existing(unmanaged_parsed, paths)
     if not compatible:
         raise ManagerError("conflict", "发现不兼容的现有 DeepSeek 配置。", {"fields": conflicts})
-    if paths.agent.is_file() and paths.agent.read_text() != expected_agent_text():
-        raise ManagerError("conflict", "现有 DeepSeek Agent 文件与目标配置不同。", {"path": str(paths.agent)})
+    target_agent_text = expected_agent_text(selected_model)
+    if paths.agent.is_file() and paths.agent.read_text() != target_agent_text:
+        managed_agent_unchanged = bool(previous_manifest.get("managed_agent_file")) and (
+            sha256_text_file(paths.agent) == previous_manifest.get("agent_sha256")
+        )
+        if not managed_agent_unchanged:
+            raise ManagerError(
+                "conflict",
+                "现有 DeepSeek Agent 文件与目标配置不同。",
+                {"path": str(paths.agent)},
+            )
     legacy_role_present = bool((unmanaged_parsed.get("agents") or {}).get(ROLE))
     if legacy_role_present:
         unmanaged_config = remove_toml_table(unmanaged_config, f"agents.{ROLE}")
@@ -722,7 +784,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
     catalog_preexisted_now = paths.catalog.is_file()
     agent_preexisted_now = paths.agent.is_file()
     selected_before = parsed.get("model_catalog_json") == str(paths.catalog)
-    previous_schema = previous_manifest.get("schema_version", 1) if previous_manifest else 2
+    previous_schema = previous_manifest.get("schema_version", 1) if previous_manifest else 4
     previous_selection_managed = bool(previous_manifest.get("managed_catalog_selection"))
     if previous_manifest and previous_schema < 2 and selected_before:
         previous_selection_managed = True
@@ -756,7 +818,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
 
     backup = make_backup(paths)
     try:
-        deepseek_model = fetch_official_deepseek_model()
+        deepseek_models = fetch_official_deepseek_models()
         base = load_base_catalog(codex_bin, paths, parsed)
         parent_model = configured_parent_model(parsed)
         if not parent_model:
@@ -784,7 +846,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
             if previous_parent == parent_model
             else current_parent_entry.get("multi_agent_version")
         )
-        catalog = merged_catalog(base, deepseek_model, parent_model)
+        catalog = merged_catalog(base, deepseek_models, parent_model)
         catalog_bytes = (json.dumps(catalog, ensure_ascii=False, indent=2) + "\n").encode()
 
         new_config = unmanaged_config
@@ -802,8 +864,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
         json.loads(catalog_bytes)
 
         atomic_write(paths.catalog, catalog_bytes)
-        if not paths.agent.is_file():
-            atomic_write(paths.agent, expected_agent_text().encode(), mode=0o644)
+        atomic_write(paths.agent, target_agent_text.encode(), mode=0o644)
         atomic_write(paths.config, new_config.encode())
 
         previous_agent_managed = bool(previous_manifest.get("managed_agent_file"))
@@ -815,7 +876,7 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
                 catalog_original_backup = str(candidate)
         adopted_existing = provider_exists or agent_preexisted or catalog_preexisted
         manifest = {
-            "schema_version": 3,
+            "schema_version": 4,
             "installed_at": datetime.now().isoformat(timespec="seconds"),
             "backup": str(backup),
             "previous_model_catalog_json": previous_catalog_value,
@@ -833,18 +894,25 @@ def install(paths: Paths, codex_bin: str) -> dict[str, Any]:
             "managed_multi_agent_v2": managed_multi_agent_v2,
             "previous_multi_agent_v2": previous_multi_agent_v2,
             "desktop_multi_agent_v2": DESKTOP_MULTI_AGENT_V2,
+            "selected_model": selected_model,
+            "supported_models": list(SUPPORTED_MODELS),
             "config_sha256": sha256_bytes(new_config.encode()),
             "catalog_sha256": sha256_bytes(catalog_bytes),
-            "agent_sha256": sha256_bytes(expected_agent_text().encode()),
+            "agent_sha256": sha256_bytes(target_agent_text.encode()),
         }
         write_manifest(paths, manifest)
-        return {"backup": str(backup), "adopted_existing": adopted_existing}
+        return {
+            "backup": str(backup),
+            "adopted_existing": adopted_existing,
+            "selected_model": selected_model,
+        }
     except Exception:
         restore_backup(paths, backup)
         raise
 
 
 def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
+    selected_model = configured_deepseek_model(paths)
     checks: dict[str, Any] = {
         "config_exists": paths.config.is_file(),
         "catalog_exists": paths.catalog.is_file(),
@@ -852,6 +920,9 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         "credential_backend": credential_backend(),
         "credential_present": credential_has_key(),
         "manifest_exists": paths.manifest.is_file(),
+        "selected_model": selected_model,
+        "model_selected": selected_model in SUPPORTED_MODELS,
+        "model_options": MODEL_OPTIONS,
     }
     errors: list[str] = []
     parsed: dict[str, Any] = {}
@@ -880,7 +951,11 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
     if paths.catalog.is_file():
         try:
             data = json.loads(paths.catalog.read_text())
-            checks["model_registered"] = any(item.get("slug") == MODEL for item in data.get("models", []))
+            registered = {item.get("slug") for item in data.get("models", [])}
+            checks["supported_models_registered"] = all(
+                model in registered for model in SUPPORTED_MODELS
+            )
+            checks["model_registered"] = selected_model in registered
             parent_entry = next(
                 (item for item in data.get("models", []) if parent_model and item.get("slug") == parent_model),
                 None,
@@ -896,9 +971,12 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
             checks["parent_uses_plaintext_v1"] = False
             errors.append("模型目录无法解析。")
     else:
+        checks["supported_models_registered"] = False
         checks["model_registered"] = False
         checks["parent_uses_plaintext_v1"] = False
-    checks["agent_content_valid"] = paths.agent.is_file() and paths.agent.read_text() == expected_agent_text()
+    checks["agent_content_valid"] = bool(selected_model) and paths.agent.is_file() and (
+        paths.agent.read_text() == expected_agent_text(selected_model)
+    )
 
     version: tuple[int, int, int] | None = None
     if codex_bin:
@@ -914,6 +992,8 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         "config_valid",
         "provider_valid",
         "catalog_selected",
+        "model_selected",
+        "supported_models_registered",
         "model_registered",
         "parent_model_configured",
         "parent_uses_plaintext_v1",
@@ -925,10 +1005,16 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         "desktop_codex_detected",
     )
     ready = all(checks.get(key) is True for key in required)
-    return result("configured" if ready else "partial", checks=checks, errors=errors)
+    return result(
+        "configured" if ready else "partial",
+        selected_model=selected_model,
+        model_options=MODEL_OPTIONS,
+        checks=checks,
+        errors=errors,
+    )
 
 
-def direct_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
+def direct_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]:
     env = dict(os.environ)
     env["CODEX_HOME"] = str(paths.home)
     prompt = "Reply exactly DEEPSEEK_DIRECT_OK and nothing else."
@@ -944,7 +1030,7 @@ def direct_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
             "-C",
             str(paths.home),
             "-m",
-            MODEL,
+            selected_model,
             "-c",
             'model_provider="deepseek"',
             "-c",
@@ -962,7 +1048,7 @@ def direct_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
             "DeepSeek 直连测试失败。",
             {"stderr": proc.stderr[-1000:]},
         )
-    return {"direct": True}
+    return {"direct": True, "selected_model": selected_model}
 
 
 def choose_parent_model(paths: Paths) -> str:
@@ -1032,7 +1118,7 @@ def wait_for_child_metadata(
         time.sleep(min(poll_interval, remaining))
 
 
-def native_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
+def native_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]:
     parent_model = choose_parent_model(paths)
     env = dict(os.environ)
     env["CODEX_HOME"] = str(paths.home)
@@ -1096,7 +1182,7 @@ def native_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
     metadata = wait_for_child_metadata(paths, child_id) if child_id else None
     expected = {
         "model_provider": PROVIDER,
-        "model": MODEL,
+        "model": selected_model,
         "reasoning_effort": EFFORT,
         "agent_role": ROLE,
     }
@@ -1115,11 +1201,18 @@ def native_test(paths: Paths, codex_bin: str) -> dict[str, Any]:
 
 
 def run_tests(paths: Paths, codex_bin: str) -> dict[str, Any]:
+    selected_model = configured_deepseek_model(paths)
+    if not selected_model:
+        raise ManagerError(
+            "model_selection_required",
+            "尚未选择 DeepSeek 模型。",
+            {"model_options": MODEL_OPTIONS},
+        )
     status = static_status(paths, codex_bin)
     if status["status"] != "configured":
         raise ManagerError("not_configured", "静态配置尚未完整，不能运行实时测试。", status)
-    direct = direct_test(paths, codex_bin)
-    native = native_test(paths, codex_bin)
+    direct = direct_test(paths, codex_bin, selected_model)
+    native = native_test(paths, codex_bin, selected_model)
     return result("ready", **direct, **native, new_task_required=True, restart_required=True)
 
 
@@ -1132,7 +1225,20 @@ def restore_backup(paths: Paths, backup: Path) -> None:
             target.unlink()
 
 
-def setup(paths: Paths, codex_bin: str, api_key_stdin: bool, skip_live_test: bool) -> dict[str, Any]:
+def setup(
+    paths: Paths,
+    codex_bin: str,
+    api_key_stdin: bool,
+    skip_live_test: bool,
+    requested_model: str | None,
+) -> dict[str, Any]:
+    selected_model = resolve_selected_model(paths, requested_model)
+    if not selected_model:
+        return result(
+            "model_selection_required",
+            message="请选择要配置的 DeepSeek 模型。",
+            model_options=MODEL_OPTIONS,
+        )
     if not credential_available():
         raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
@@ -1148,7 +1254,7 @@ def setup(paths: Paths, codex_bin: str, api_key_stdin: bool, skip_live_test: boo
 
     install_result: dict[str, Any] | None = None
     try:
-        install_result = install(paths, codex_bin)
+        install_result = install(paths, codex_bin, selected_model)
         if skip_live_test:
             return result(
                 "configured",
@@ -1325,6 +1431,7 @@ def main() -> int:
     parser.add_argument("command", choices=("status", "setup", "test", "repair", "disable", "uninstall"))
     parser.add_argument("--codex-home")
     parser.add_argument("--api-key-stdin", action="store_true")
+    parser.add_argument("--model", choices=SUPPORTED_MODELS)
     parser.add_argument("--skip-live-test", action="store_true")
     parser.add_argument("--remove-credential", action="store_true")
     parser.add_argument("--json", action="store_true")
@@ -1337,7 +1444,13 @@ def main() -> int:
         else:
             with operation_lock(paths):
                 if args.command in {"setup", "repair"}:
-                    payload = setup(paths, codex_bin or "", args.api_key_stdin, args.skip_live_test)
+                    payload = setup(
+                        paths,
+                        codex_bin or "",
+                        args.api_key_stdin,
+                        args.skip_live_test,
+                        args.model,
+                    )
                 elif args.command == "test":
                     payload = run_tests(paths, codex_bin or "")
                 elif args.command == "disable":
@@ -1345,7 +1458,11 @@ def main() -> int:
                 else:
                     payload = uninstall(paths, args.remove_credential)
         emit(payload, args.json)
-        return 0 if payload["status"] not in {"partial", "credential_missing"} else 2
+        return 0 if payload["status"] not in {
+            "partial",
+            "credential_missing",
+            "model_selection_required",
+        } else 2
     except ManagerError as exc:
         emit(result(exc.code, message=str(exc), **exc.details), args.json)
         return 2

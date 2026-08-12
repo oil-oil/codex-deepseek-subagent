@@ -2,7 +2,7 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：将 DeepSeek 注册为 Codex 原生子 Agent">
 </p>
 
-把 `deepseek-v4-flash` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。管理程序只负责配置和验收；配置完成后的普通编码任务由当前主 Agent 直接派发。
+把 `deepseek-v4-flash` 或 `deepseek-v4-pro` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。DeepSeek V4 Pro 的 8·13 更新继续使用 `deepseek-v4-pro` API 标识。
 
 ## 适用范围
 
@@ -36,9 +36,14 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-4. Codex 会先检查状态；缺少凭据时再索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
+4. Codex 会先让你选择模型：
 
-5. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
+   - `DeepSeek V4 Flash`：更快、更省，适合日常编码；
+   - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
+
+5. 选择后，Codex 会在缺少凭据时索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
+
+6. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
 ```text
 用 DeepSeek 子 Agent 检查这个项目。
@@ -51,6 +56,7 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 - 日常任务只能由主 Agent 直接调用 `spawn_agent(agent_type="DeepSeek", fork_turns="none")`。
 - 配置与验收只使用桌面应用内置运行时；版本仅作诊断，实际能力以真实派发结果为准。
 - 父模型从当前配置读取；切换父模型后运行 `repair`。
+- DeepSeek 模型可以随时切换；`repair --model deepseek-v4-pro` 或 `repair --model deepseek-v4-flash` 会更新配置并重新验收。
 - DeepSeek 只处理文本。图片、视频、截图等视觉输入必须由父 Agent 先识别并整理成文字。
 - 当前工具若不认识 `DeepSeek` 角色，只提示用户打开新任务或重启 Codex；不得用脚本或 `codex exec` 代做用户任务。
 
@@ -64,9 +70,9 @@ macOS：
 
 ```bash
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
-python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --api-key-stdin --json
+python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py test --json
-python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --json
+python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-v4-flash --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
@@ -75,9 +81,9 @@ Windows：
 
 ```powershell
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py status --json
-py -3 codex-deepseek-subagent\scripts\codex_deepseek.py setup --api-key-stdin --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py test --json
-py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-v4-flash --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py disable --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
 ```
@@ -88,7 +94,7 @@ py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
 
 ```text
 model_provider = deepseek
-model = deepseek-v4-flash
+model = deepseek-v4-flash 或 deepseek-v4-pro（必须等于所选模型）
 reasoning_effort = high
 agent_role = DeepSeek
 ```
@@ -98,6 +104,8 @@ NATIVE_DEEPSEEK_OK
 ```
 
 不能只相信子 Agent 的自述。
+
+模型名称和能力以 [DeepSeek 官方模型列表](https://api-docs.deepseek.com/api/list-models) 与 [官方 Codex 安装脚本](https://cdn.deepseek.com/api-docs/codex-deepseek-setup-en.sh) 为准。
 
 ## 安全与回滚
 

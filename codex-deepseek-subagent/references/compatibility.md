@@ -8,6 +8,7 @@
 - ChatGPT/Codex 桌面应用至少启动过一次
 - DeepSeek 官方 Responses API
 - `deepseek-v4-flash`
+- `deepseek-v4-pro`（包含 DeepSeek 官方在 8·13 更新的当前服务版本，API slug 不变）
 - 思考程度 `high`
 
 ## 配置位置
@@ -44,7 +45,7 @@ spawn_agent(agent_type="DeepSeek", fork_turns="none", ...)
 
    ```text
    model_provider = deepseek
-   model = deepseek-v4-flash
+   model = deepseek-v4-flash 或 deepseek-v4-pro
    reasoning_effort = high
    agent_role = DeepSeek
    ```
@@ -67,4 +68,11 @@ API Key 可由用户在聊天中提供。管理程序从标准输入读取，不
 
 ## 视觉输入
 
-DeepSeek V4 Flash 当前只接受文本。父 Agent 必须先检查图片、视频和截图，把必要事实写成文字任务包；子 Agent 不应声称自己看过视觉材料。
+DeepSeek V4 Flash 与 V4 Pro 当前都只接受文本。父 Agent 必须先检查图片、视频和截图，把必要事实写成文字任务包；子 Agent 不应声称自己看过视觉材料。
+
+## 模型选择
+
+- `deepseek-v4-flash`：响应更快、成本更低，适合日常编码和高频任务。
+- `deepseek-v4-pro`：能力更强，适合复杂编码、架构分析和高难度 Agent 任务。
+
+首次配置必须明确选择模型。模型目录同时注册两个官方模型，Agent 文件只绑定当前选择。切换模型时管理程序会更新 Agent 文件并重新执行直连与原生派发验收。DeepSeek 官方对 V4 Pro 的服务端版本升级不改变 API slug，仍使用 `deepseek-v4-pro`。

@@ -1,6 +1,6 @@
 ---
 name: codex-deepseek-subagent
-description: 仅在用户要求配置、检查、测试、修复、停用或卸载 Codex 的 DeepSeek 原生子 Agent 时使用；普通 DeepSeek API 问题和已配置后的日常编码任务不要触发。
+description: 仅在用户要求配置、选择或切换模型、检查、测试、修复、停用或卸载 Codex 的 DeepSeek 原生子 Agent 时使用；支持 DeepSeek V4 Flash 与 V4 Pro。普通 DeepSeek API 问题和已配置后的日常编码任务不要触发。
 ---
 
 # Codex DeepSeek 子 Agent
@@ -12,6 +12,7 @@ description: 仅在用户要求配置、检查、测试、修复、停用或卸�
 - 只使用桌面应用内置的 Codex 运行时；版本仅用于诊断，兼容性以真实派发验收为准。
 - 从桌面配置读取父模型，并由管理程序应用 v1 明文派发设置；不要硬编码父模型或手改配置。技术原因见 [references/compatibility.md](references/compatibility.md)。
 - 父模型变化后必须运行 `repair`，再重新验收。
+- 支持 `deepseek-v4-flash` 与 `deepseek-v4-pro`。Flash 更快、更省；Pro 能力更强，适合复杂 Agent 任务。两者默认思考程度均为 `high`。
 - DeepSeek 是纯文本 Agent，不处理图片、视频、截图或其他视觉输入。父 Agent 先识别视觉内容，再传入文字事实。
 - 日常任务只能直接调用：
 
@@ -25,11 +26,12 @@ description: 仅在用户要求配置、检查、测试、修复、停用或卸�
 ## 触发后的流程
 
 1. 运行 `status --json`，根据结构化状态继续，不靠文件名猜测。
-2. 配置请求运行 `setup --json`；父模型已变化或配置损坏时运行 `repair --json`。
-3. 缺少凭据时简洁索要 API Key。收到后不要复述、回显或写入临时文件，只通过 `--api-key-stdin` 的标准输入传递。
-4. `setup` 或 `test` 使用桌面内置运行时创建隔离验收会话。若返回 `new_task_required` 或 `restart_required`，提示用户重启桌面应用并打开新任务。
-5. 验收必须检查子线程数据库 `threads` 表的实际元数据，并确认子 Agent 返回口令 `NATIVE_DEEPSEEK_OK`。两者缺一不可，不能以子 Agent 自述代替。
-6. 最终只汇报状态、实际 Provider、模型、思考程度、角色和备份位置；不要输出密钥或原始事件日志。
+2. 首次配置时，如果用户没有指定模型，先让用户选择：`DeepSeek V4 Flash`（更快、更省）或 `DeepSeek V4 Pro`（能力更强，推荐复杂任务）。不要替用户静默选择。
+3. 配置请求运行 `setup --model <模型> --json`；切换模型或修复配置时运行 `repair --model <模型> --json`。不传 `--model` 的 `repair` 会保留当前选择。
+4. 缺少凭据时简洁索要 API Key。收到后不要复述、回显或写入临时文件，只通过 `--api-key-stdin` 的标准输入传递。
+5. `setup`、`repair` 或 `test` 使用桌面内置运行时创建隔离验收会话。若返回 `new_task_required` 或 `restart_required`，提示用户重启桌面应用并打开新任务。
+6. 验收必须检查子线程数据库 `threads` 表的实际元数据，并确认子 Agent 返回口令 `NATIVE_DEEPSEEK_OK`。实际 `model` 必须等于用户选择的模型，两者缺一不可。
+7. 最终只汇报状态、实际 Provider、模型、思考程度、角色和备份位置；不要输出密钥或原始事件日志。
 
 ## 管理命令
 
@@ -40,9 +42,9 @@ python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
 ```
 
 - `status`：只读检查桌面内置运行时、配置、模型目录、凭据和客户端能力。
-- `setup`：写入配置并验收；缺少密钥时返回 `credential_missing`。
+- `setup`：使用 `--model deepseek-v4-flash` 或 `--model deepseek-v4-pro` 写入配置并验收；未选择时返回 `model_selection_required`。
 - `test`：通过桌面内置运行时执行一次直连测试和一次原生 `spawn_agent(agent_type="DeepSeek")` 验收。
-- `repair`：按当前父模型重新应用配置并验收。
+- `repair`：按当前父模型重新应用配置并验收；传 `--model` 可切换模型，不传则保留当前模型。
 - `disable`：停用本 Skill 创建的角色，保留 Provider、模型目录和凭据。
 - `uninstall`：移除本 Skill 管理的配置；只有用户明确要求删除凭据时才传 `--remove-credential`。
 
@@ -53,6 +55,7 @@ python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
 - `ready`：直连、原生路由、数据库元数据和返回口令均通过。
 - `configured`：静态配置完整，但尚未完成实时验收。
 - `credential_missing`：索要 API Key 后继续原流程。
+- `model_selection_required`：向用户展示 Flash/Pro 选项，得到选择后继续原流程。
 - `operation_in_progress`：已有配置操作正在运行，稍后重试，不并发修改。
 - `conflict`：报告冲突文件和字段，等待用户决定是否替换。
 - `unsupported`：报告缺少的系统能力，不按固定版本号猜测兼容性，也不手工绕过。

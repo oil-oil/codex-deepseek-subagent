@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "先运行 status；缺少凭据时再索要 Key，并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时，管理程序按当前父模型应用 v1 明文派发设置。返回 ready 后提示重启桌面应用并新建任务。",
+      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
       "files": []
     },
     {
@@ -41,6 +41,18 @@
       "id": 7,
       "prompt": "配置成功后，日常代码审查应该怎么调用？",
       "expected_output": "主 Agent 直接调用 spawn_agent(agent_type=\"DeepSeek\")；不重复运行 setup、test、脚本或 codex exec。",
+      "files": []
+    },
+    {
+      "id": 8,
+      "prompt": "帮我配置 DeepSeek V4 Pro 8·13 版本作为子 Agent。",
+      "expected_output": "使用 API slug deepseek-v4-pro，运行 setup --model deepseek-v4-pro；完成直连和原生 spawn_agent 验收，实际线程元数据中的 model 必须是 deepseek-v4-pro。",
+      "files": []
+    },
+    {
+      "id": 9,
+      "prompt": "我现在用 Flash，切换到 Pro。",
+      "expected_output": "运行 repair --model deepseek-v4-pro，更新受管 Agent 文件并重新执行完整验收；不要求重新输入已有 API Key。",
       "files": []
     }
   ]

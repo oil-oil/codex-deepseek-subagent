@@ -28,6 +28,10 @@ sys.modules[spec.name] = manager
 spec.loader.exec_module(manager)
 
 
+def deepseek_models() -> dict[str, dict[str, str]]:
+    return {slug: {"slug": slug} for slug in manager.SUPPORTED_MODELS}
+
+
 class ManagerTests(unittest.TestCase):
     def test_managed_block_is_idempotent(self) -> None:
         original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent = true\n'
@@ -94,17 +98,30 @@ class ManagerTests(unittest.TestCase):
                 {"slug": "gpt-5.6-sol", "old": True},
             ]
         }
-        merged = manager.merged_catalog(base, {"slug": manager.MODEL, "new": True}, "gpt-5.6-sol")
+        models = deepseek_models()
+        models[manager.FLASH_MODEL]["new"] = True
+        merged = manager.merged_catalog(base, models, "gpt-5.6-sol")
         by_slug = {item["slug"]: item for item in merged["models"]}
-        self.assertEqual(set(by_slug), {"gpt-test", "gpt-5.6-sol", manager.MODEL})
+        self.assertEqual(
+            set(by_slug),
+            {"gpt-test", "gpt-5.6-sol", *manager.SUPPORTED_MODELS},
+        )
         self.assertEqual(by_slug["gpt-test"]["name"], "OpenAI test")
         self.assertTrue(by_slug["gpt-5.6-sol"]["old"])
         self.assertEqual(by_slug["gpt-5.6-sol"]["multi_agent_version"], manager.PARENT_MULTI_AGENT_VERSION)
-        self.assertEqual(by_slug[manager.MODEL], {"slug": manager.MODEL, "new": True})
+        self.assertEqual(
+            by_slug[manager.FLASH_MODEL],
+            {"slug": manager.FLASH_MODEL, "new": True},
+        )
+        self.assertEqual(by_slug[manager.PRO_MODEL], {"slug": manager.PRO_MODEL})
 
     def test_merged_catalog_errors_when_parent_is_missing(self) -> None:
         with self.assertRaises(manager.ManagerError) as raised:
-            manager.merged_catalog({"models": [{"slug": "gpt-test"}]}, {"slug": manager.MODEL}, "missing-parent")
+            manager.merged_catalog(
+                {"models": [{"slug": "gpt-test"}]},
+                deepseek_models(),
+                "missing-parent",
+            )
         self.assertEqual(raised.exception.code, "parent_model_missing")
 
     def test_parent_model_has_no_hardcoded_fallback(self) -> None:
@@ -116,11 +133,33 @@ class ManagerTests(unittest.TestCase):
         self.assertIsNone(manager.configured_parent_model({"model": manager.MODEL}))
 
     def test_agent_is_standalone_text_only_high_reasoning(self) -> None:
-        text = manager.expected_agent_text()
+        text = manager.expected_agent_text(manager.PRO_MODEL)
+        self.assertIn(f'model = "{manager.PRO_MODEL}"', text)
         self.assertIn('model_provider = "deepseek"', text)
         self.assertIn('model_reasoning_effort = "high"', text)
         self.assertIn("text-only", text)
         self.assertIn("Do not spawn additional subagents", text)
+
+    def test_model_selection_prefers_explicit_then_preserves_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = manager.resolve_paths(directory)
+            self.assertIsNone(manager.resolve_selected_model(paths, None))
+            self.assertEqual(
+                manager.resolve_selected_model(paths, manager.PRO_MODEL),
+                manager.PRO_MODEL,
+            )
+            manager.write_manifest(
+                paths,
+                {"schema_version": 4, "selected_model": manager.PRO_MODEL},
+            )
+            self.assertEqual(
+                manager.resolve_selected_model(paths, None),
+                manager.PRO_MODEL,
+            )
+            self.assertEqual(
+                manager.resolve_selected_model(paths, manager.FLASH_MODEL),
+                manager.FLASH_MODEL,
+            )
 
     def test_disable_accepts_windows_line_endings_in_managed_agent(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
@@ -251,14 +290,17 @@ class ManagerTests(unittest.TestCase):
                     {
                         "models": [
                             {"slug": "gpt-5.6-sol", "multi_agent_version": manager.PARENT_MULTI_AGENT_VERSION},
-                            {"slug": manager.MODEL},
+                            *deepseek_models().values(),
                         ]
                     }
                 )
             )
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
-            manager.write_manifest(paths, {"schema_version": 2})
+            manager.write_manifest(
+                paths,
+                {"schema_version": 4, "selected_model": manager.FLASH_MODEL},
+            )
             status = manager.static_status(paths, "desktop-codex")
             self.assertEqual(status["status"], "configured")
             self.assertTrue(status["checks"]["parent_uses_plaintext_v1"])
@@ -310,7 +352,7 @@ class ManagerTests(unittest.TestCase):
             with mock.patch.object(manager.subprocess, "run", return_value=proc) as run, mock.patch.object(
                 manager, "wait_for_child_metadata", return_value=expected
             ):
-                result = manager.native_test(paths, "codex")
+                result = manager.native_test(paths, "codex", manager.FLASH_MODEL)
             argv = run.call_args.args[0]
             self.assertNotIn("--disable", argv)
             self.assertNotIn("--enable", argv)
@@ -353,7 +395,7 @@ class ManagerTests(unittest.TestCase):
             )
             with mock.patch.object(manager.subprocess, "run", return_value=proc):
                 with self.assertRaises(manager.ManagerError) as raised:
-                    manager.native_test(paths, "codex")
+                    manager.native_test(paths, "codex", manager.FLASH_MODEL)
             self.assertEqual(raised.exception.code, "native_route_mismatch")
 
     def test_native_test_rejects_parent_forged_token_without_child_message(self) -> None:
@@ -392,7 +434,7 @@ class ManagerTests(unittest.TestCase):
                 return_value=expected,
             ):
                 with self.assertRaises(manager.ManagerError) as raised:
-                    manager.native_test(paths, "codex")
+                    manager.native_test(paths, "codex", manager.FLASH_MODEL)
             self.assertEqual(raised.exception.code, "native_route_mismatch")
 
     def test_wait_for_child_metadata_retries_until_visible(self) -> None:
@@ -447,17 +489,53 @@ class ManagerTests(unittest.TestCase):
                 manager.release_file_lock(lock_file)
         self.assertEqual([call[1:] for call in fake_msvcrt.calls], [(1, 1), (2, 1)])
 
-    def test_onboarding_requests_credential_before_writing_config(self) -> None:
+    def test_onboarding_requests_model_before_credential_or_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
             "credential_available",
             return_value=True,
         ), mock.patch.object(manager, "credential_has_key", return_value=False):
             paths = manager.resolve_paths(directory)
-            result = manager.setup(paths, "desktop-codex", False, False)
-            self.assertEqual(result, {"status": "credential_missing", "credential": "deepseek_api_key"})
+            result = manager.setup(paths, "desktop-codex", False, False, None)
+            self.assertEqual(result["status"], "model_selection_required")
+            self.assertEqual(
+                [option["id"] for option in result["model_options"]],
+                list(manager.SUPPORTED_MODELS),
+            )
             self.assertFalse(paths.config.exists())
             self.assertFalse(paths.manifest.exists())
+
+    def test_onboarding_does_not_adopt_agent_file_as_implicit_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "credential_available",
+            return_value=True,
+        ), mock.patch.object(manager, "credential_has_key", return_value=True):
+            paths = manager.resolve_paths(directory)
+            paths.agent.parent.mkdir(parents=True, exist_ok=True)
+            paths.agent.write_text(manager.expected_agent_text(manager.PRO_MODEL))
+            result = manager.setup(paths, "desktop-codex", False, False, None)
+            self.assertEqual(result["status"], "model_selection_required")
+            self.assertFalse(paths.config.exists())
+            self.assertFalse(paths.manifest.exists())
+
+    def test_onboarding_requests_credential_after_model_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager,
+            "credential_available",
+            return_value=True,
+        ), mock.patch.object(manager, "credential_has_key", return_value=False):
+            result = manager.setup(
+                manager.resolve_paths(directory),
+                "desktop-codex",
+                False,
+                False,
+                manager.PRO_MODEL,
+            )
+            self.assertEqual(
+                result,
+                {"status": "credential_missing", "credential": "deepseek_api_key"},
+            )
 
     def test_skip_live_test_does_not_probe_diagnostic_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
@@ -469,7 +547,13 @@ class ManagerTests(unittest.TestCase):
             "install",
             return_value={"backup": "/tmp/backup", "adopted_existing": False},
         ), mock.patch.object(manager, "codex_version_text") as version:
-            result = manager.setup(manager.resolve_paths(directory), "desktop-codex", False, True)
+            result = manager.setup(
+                manager.resolve_paths(directory),
+                "desktop-codex",
+                False,
+                True,
+                manager.PRO_MODEL,
+            )
             self.assertEqual(result["status"], "configured")
             version.assert_not_called()
 
@@ -489,16 +573,16 @@ class ManagerTests(unittest.TestCase):
             paths.agent.write_text(manager.expected_agent_text())
             base = {"models": [{"slug": "gpt-5.6-sol"}, {"slug": "gpt-other"}]}
             patches = [
-                mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
+                mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(manager, "load_base_catalog", return_value=base),
                 mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
                 mock.patch.object(manager, "credential_available", return_value=True),
                 mock.patch.object(manager, "credential_has_key", return_value=True),
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                first = manager.setup(paths, "codex", False, True)
+                first = manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
                 first_manifest = manager.read_manifest(paths)
-                second = manager.setup(paths, "codex", False, True)
+                second = manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
             self.assertEqual(first["status"], "configured")
             self.assertEqual(second["status"], "configured")
             self.assertEqual(first_manifest["previous_model_catalog_json"], external_catalog)
@@ -512,6 +596,76 @@ class ManagerTests(unittest.TestCase):
             self.assertTrue(manifest["previous_multi_agent_v2"])
             self.assertFalse(
                 manager.parse_toml_text(paths.config.read_text())["features"]["multi_agent_v2"]
+            )
+
+    def test_setup_can_switch_managed_agent_from_flash_to_pro(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = manager.resolve_paths(directory)
+            paths.config.parent.mkdir(parents=True, exist_ok=True)
+            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            base = {"models": [{"slug": "gpt-5.6-sol"}]}
+            patches = [
+                mock.patch.object(
+                    manager,
+                    "fetch_official_deepseek_models",
+                    return_value=deepseek_models(),
+                ),
+                mock.patch.object(manager, "load_base_catalog", return_value=base),
+                mock.patch.object(manager, "credential_available", return_value=True),
+                mock.patch.object(manager, "credential_has_key", return_value=True),
+            ]
+            with patches[0], patches[1], patches[2], patches[3]:
+                first = manager.setup(
+                    paths,
+                    "codex",
+                    False,
+                    True,
+                    manager.FLASH_MODEL,
+                )
+                second = manager.setup(
+                    paths,
+                    "codex",
+                    False,
+                    True,
+                    manager.PRO_MODEL,
+                )
+            self.assertEqual(first["selected_model"], manager.FLASH_MODEL)
+            self.assertEqual(second["selected_model"], manager.PRO_MODEL)
+            self.assertEqual(
+                manager.parse_toml_text(paths.agent.read_text())["model"],
+                manager.PRO_MODEL,
+            )
+            manifest = manager.read_manifest(paths)
+            self.assertEqual(manifest["schema_version"], 4)
+            self.assertEqual(manifest["selected_model"], manager.PRO_MODEL)
+            registered = {
+                item["slug"] for item in json.loads(paths.catalog.read_text())["models"]
+            }
+            self.assertTrue(set(manager.SUPPORTED_MODELS).issubset(registered))
+
+    def test_repair_without_model_preserves_existing_selection(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = manager.resolve_paths(directory)
+            paths.config.parent.mkdir(parents=True, exist_ok=True)
+            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            base = {"models": [{"slug": "gpt-5.6-sol"}]}
+            patches = [
+                mock.patch.object(
+                    manager,
+                    "fetch_official_deepseek_models",
+                    return_value=deepseek_models(),
+                ),
+                mock.patch.object(manager, "load_base_catalog", return_value=base),
+                mock.patch.object(manager, "credential_available", return_value=True),
+                mock.patch.object(manager, "credential_has_key", return_value=True),
+            ]
+            with patches[0], patches[1], patches[2], patches[3]:
+                manager.setup(paths, "codex", False, True, manager.PRO_MODEL)
+                repaired = manager.setup(paths, "codex", False, True, None)
+            self.assertEqual(repaired["selected_model"], manager.PRO_MODEL)
+            self.assertIn(
+                f'model = "{manager.PRO_MODEL}"',
+                paths.agent.read_text(),
             )
 
     def test_uninstall_restores_preexisting_catalog_and_selection(self) -> None:
@@ -530,7 +684,7 @@ class ManagerTests(unittest.TestCase):
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             paths.agent.write_text(manager.expected_agent_text())
             patches = [
-                mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
+                mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(
                     manager,
                     "load_base_catalog",
@@ -539,7 +693,7 @@ class ManagerTests(unittest.TestCase):
                 mock.patch.object(manager, "credential_has_key", return_value=False),
             ]
             with patches[0], patches[1], patches[2]:
-                manager.install(paths, "codex")
+                manager.install(paths, "codex", manager.FLASH_MODEL)
                 result = manager.uninstall(paths, remove_credential=False)
             self.assertTrue(result["catalog_restored"])
             self.assertFalse(result["catalog_removed"])
@@ -584,8 +738,8 @@ class ManagerTests(unittest.TestCase):
             patches = [
                 mock.patch.object(
                     manager,
-                    "fetch_official_deepseek_model",
-                    return_value={"slug": manager.MODEL},
+                    "fetch_official_deepseek_models",
+                    return_value=deepseek_models(),
                 ),
                 mock.patch.object(
                     manager,
@@ -595,7 +749,7 @@ class ManagerTests(unittest.TestCase):
                 mock.patch.object(manager, "credential_has_key", return_value=False),
             ]
             with patches[0], patches[1], patches[2]:
-                manager.install(paths, "codex")
+                manager.install(paths, "codex", manager.FLASH_MODEL)
                 manifest = manager.read_manifest(paths)
                 self.assertTrue(manifest["managed_catalog_selection"])
                 self.assertFalse(manifest["catalog_preexisted"])
@@ -662,18 +816,18 @@ class ManagerTests(unittest.TestCase):
                 ]
             }
             patches = [
-                mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
+                mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(manager, "load_base_catalog", side_effect=lambda *_: copy.deepcopy(base)),
                 mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"),
                 mock.patch.object(manager, "credential_available", return_value=True),
                 mock.patch.object(manager, "credential_has_key", return_value=True),
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
-                manager.setup(paths, "codex", False, True)
+                manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
                 paths.config.write_text(
                     manager.set_top_level_key(paths.config.read_text(), "model", "gpt-5.6-terra")
                 )
-                manager.setup(paths, "codex", False, True)
+                manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
             catalog = json.loads(paths.catalog.read_text())
             by_slug = {item["slug"]: item for item in catalog["models"]}
             self.assertEqual(by_slug["gpt-5.6-sol"]["multi_agent_version"], "original-sol")
@@ -696,7 +850,7 @@ class ManagerTests(unittest.TestCase):
             )
             paths.config.write_text('model = "gpt-5.6-sol"\n' + legacy_role)
             patches = [
-                mock.patch.object(manager, "fetch_official_deepseek_model", return_value={"slug": manager.MODEL}),
+                mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(
                     manager,
                     "load_base_catalog",
@@ -704,7 +858,7 @@ class ManagerTests(unittest.TestCase):
                 ),
             ]
             with patches[0], patches[1]:
-                manager.install(paths, "codex")
+                manager.install(paths, "codex", manager.FLASH_MODEL)
             config_text = paths.config.read_text()
             self.assertNotIn(manager.ROLE_BEGIN, config_text)
             self.assertNotIn(manager.ROLE_END, config_text)
@@ -725,8 +879,8 @@ class ManagerTests(unittest.TestCase):
             patches = [
                 mock.patch.object(
                     manager,
-                    "fetch_official_deepseek_model",
-                    return_value={"slug": manager.MODEL},
+                    "fetch_official_deepseek_models",
+                    return_value=deepseek_models(),
                 ),
                 mock.patch.object(
                     manager,
@@ -735,7 +889,7 @@ class ManagerTests(unittest.TestCase):
                 ),
             ]
             with patches[0], patches[1]:
-                manager.install(paths, "codex")
+                manager.install(paths, "codex", manager.FLASH_MODEL)
             config_text = paths.config.read_text()
             self.assertNotIn("[agents.DeepSeek]", config_text)
             self.assertTrue(manager.read_manifest(paths)["legacy_role_block_removed"])
@@ -778,8 +932,8 @@ class ManagerTests(unittest.TestCase):
             patches = [
                 mock.patch.object(
                     manager,
-                    "fetch_official_deepseek_model",
-                    return_value={"slug": manager.MODEL},
+                    "fetch_official_deepseek_models",
+                    return_value=deepseek_models(),
                 ),
                 mock.patch.object(
                     manager,
@@ -788,7 +942,7 @@ class ManagerTests(unittest.TestCase):
                 ),
             ]
             with patches[0], patches[1]:
-                manager.install(paths, "codex")
+                manager.install(paths, "codex", manager.FLASH_MODEL)
             self.assertNotIn('[agents."DeepSeek"]', paths.config.read_text())
             self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "configured")
 

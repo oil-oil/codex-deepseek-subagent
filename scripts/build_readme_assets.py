@@ -58,7 +58,7 @@ hero = f'''<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="380" vie
     <text x="392" y="183" text-anchor="middle" fill="#FFFFFF" font-size="22" font-weight="700" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">DeepSeek</text>
     <path d="M38 221H450" stroke="#26395D"/>
     <circle cx="58" cy="243" r="6" fill="#42D392"/>
-    <text x="76" y="249" fill="#C7D1E8" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">deepseek · v4-flash · high</text>
+    <text x="76" y="249" fill="#C7D1E8" font-size="18" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">deepseek · flash / pro · high</text>
   </g>
 </svg>
 '''
