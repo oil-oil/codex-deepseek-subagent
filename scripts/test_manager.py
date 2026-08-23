@@ -180,10 +180,10 @@ class ManagerTests(unittest.TestCase):
         )
         self.assertEqual(manager.parse_official_model_catalog(script), payload)
 
-    def test_model_selection_prefers_explicit_then_preserves_manifest(self) -> None:
+    def test_model_selection_defaults_to_flash_vision_then_preserves_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
-            self.assertIsNone(manager.resolve_selected_model(paths, None))
+            self.assertEqual(manager.resolve_selected_model(paths, None), manager.FLASH_MODEL)
             self.assertEqual(
                 manager.resolve_selected_model(paths, manager.PRO_MODEL),
                 manager.PRO_MODEL,
@@ -529,7 +529,7 @@ class ManagerTests(unittest.TestCase):
                 manager.release_file_lock(lock_file)
         self.assertEqual([call[1:] for call in fake_msvcrt.calls], [(1, 1), (2, 1)])
 
-    def test_onboarding_requests_model_before_credential_or_config(self) -> None:
+    def test_onboarding_defaults_to_flash_vision_before_credential_or_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
             "credential_available",
@@ -537,27 +537,22 @@ class ManagerTests(unittest.TestCase):
         ), mock.patch.object(manager, "credential_has_key", return_value=False):
             paths = manager.resolve_paths(directory)
             result = manager.setup(paths, "desktop-codex", False, False, None)
-            self.assertEqual(result["status"], "model_selection_required")
-            self.assertEqual(
-                [option["id"] for option in result["model_options"]],
-                list(manager.SUPPORTED_MODELS),
-            )
+            self.assertEqual(result, {"status": "credential_missing", "credential": "deepseek_api_key"})
             self.assertFalse(paths.config.exists())
             self.assertFalse(paths.manifest.exists())
 
-    def test_onboarding_does_not_adopt_agent_file_as_implicit_selection(self) -> None:
+    def test_onboarding_default_ignores_existing_agent_file_for_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
             "credential_available",
             return_value=True,
-        ), mock.patch.object(manager, "credential_has_key", return_value=True):
+        ), mock.patch.object(manager, "credential_has_key", return_value=False):
             paths = manager.resolve_paths(directory)
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
             write_utf8(paths.agent, manager.expected_agent_text(manager.PRO_MODEL))
             result = manager.setup(paths, "desktop-codex", False, False, None)
-            self.assertEqual(result["status"], "model_selection_required")
+            self.assertEqual(result, {"status": "credential_missing", "credential": "deepseek_api_key"})
             self.assertFalse(paths.config.exists())
-            self.assertFalse(paths.manifest.exists())
 
     def test_onboarding_requests_credential_after_model_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
