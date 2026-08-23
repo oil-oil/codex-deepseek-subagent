@@ -36,12 +36,14 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-4. Codex 会先让你选择模型：
+4. 未指定模型时，Codex 默认使用 `DeepSeek V4 Flash Vision Experimental`：
 
    - `DeepSeek V4 Flash Vision Experimental`：更快、更省，并支持文本、截图和图片输入；
    - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
 
-5. 选择后，Codex 会在缺少凭据时索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
+   如需使用 Pro，请显式指定 `--model deepseek-v4-pro`。
+
+5. 随后，Codex 会在缺少凭据时索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
 
 6. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
