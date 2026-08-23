@@ -697,7 +697,7 @@ def resolve_selected_model(paths: Paths, requested: str | None) -> str | None:
                 {"model_options": MODEL_OPTIONS},
             )
         return requested
-    return configured_deepseek_model(paths)
+    return configured_deepseek_model(paths) or FLASH_MODEL
 
 
 def run_codex_models(codex_bin: str, paths: Paths) -> dict[str, Any]:
@@ -1265,12 +1265,6 @@ def setup(
     requested_model: str | None,
 ) -> dict[str, Any]:
     selected_model = resolve_selected_model(paths, requested_model)
-    if not selected_model:
-        return result(
-            "model_selection_required",
-            message="请选择要配置的 DeepSeek 模型。",
-            model_options=MODEL_OPTIONS,
-        )
     if not credential_available():
         raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
