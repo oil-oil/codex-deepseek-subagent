@@ -26,7 +26,7 @@ description: 仅在用户要求配置、选择或切换模型、检查、测试�
 ## 触发后的流程
 
 1. 运行 `status --json`，根据结构化状态继续，不靠文件名猜测。
-2. 首次配置时，如果用户没有指定模型，先让用户选择：`DeepSeek V4 Flash Vision Experimental`（更快、更省，支持视觉输入）或 `DeepSeek V4 Pro`（能力更强但只处理文本）。不要替用户静默选择。
+2. 首次配置时，如果用户没有指定模型，默认使用 `DeepSeek V4 Flash Vision Experimental`（更快、更省，支持视觉输入）；如用户明确要求 Pro，才使用 `DeepSeek V4 Pro`（能力更强但只处理文本）。
 3. 配置请求运行 `setup --model <模型> --json`；切换模型或修复配置时运行 `repair --model <模型> --json`。不传 `--model` 的 `repair` 会保留当前选择。
 4. 缺少凭据时简洁索要 API Key。收到后不要复述、回显或写入临时文件，只通过 `--api-key-stdin` 的标准输入传递。
 5. `setup`、`repair` 或 `test` 使用桌面内置运行时创建隔离验收会话。若返回 `new_task_required` 或 `restart_required`，提示用户重启桌面应用并打开新任务。
@@ -42,7 +42,7 @@ python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
 ```
 
 - `status`：只读检查桌面内置运行时、配置、模型目录、凭据和客户端能力。
-- `setup`：使用 `--model deepseek-v4-flash-vision-exp` 或 `--model deepseek-v4-pro` 写入配置并验收；未选择时返回 `model_selection_required`。
+- `setup`：使用 `--model deepseek-v4-flash-vision-exp` 或 `--model deepseek-v4-pro` 写入配置并验收；不传 `--model` 时默认使用 `deepseek-v4-flash-vision-exp`。
 - `test`：通过桌面内置运行时执行一次直连测试和一次原生 `spawn_agent(agent_type="DeepSeek")` 验收。
 - `repair`：按当前父模型重新应用配置并验收；传 `--model` 可切换模型，不传则保留当前模型。
 - `disable`：停用本 Skill 创建的角色，保留 Provider、模型目录和凭据。
@@ -55,7 +55,7 @@ python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
 - `ready`：直连、原生路由、数据库元数据和返回口令均通过。
 - `configured`：静态配置完整，但尚未完成实时验收。
 - `credential_missing`：索要 API Key 后继续原流程。
-- `model_selection_required`：向用户展示 Flash/Pro 选项，得到选择后继续原流程。
+- `model_selection_required`：仅在历史配置无法确定模型且默认值被显式禁用时出现；正常首次配置不应返回此状态。
 - `operation_in_progress`：已有配置操作正在运行，稍后重试，不并发修改。
 - `conflict`：报告冲突文件和字段，等待用户决定是否替换。
 - `unsupported`：报告缺少的系统能力，不按固定版本号猜测兼容性，也不手工绕过。

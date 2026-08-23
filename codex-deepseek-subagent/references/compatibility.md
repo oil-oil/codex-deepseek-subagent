@@ -75,4 +75,4 @@ API Key 可由用户在聊天中提供。管理程序从标准输入读取，不
 - `deepseek-v4-flash-vision-exp`：响应更快、成本更低，适合日常编码和需要读取截图/图片的高频任务。
 - `deepseek-v4-pro`：能力更强，适合复杂编码、架构分析和高难度 Agent 任务。
 
-首次配置必须明确选择模型。模型目录同时注册两个官方模型，Agent 文件只绑定当前选择。切换模型时管理程序会更新 Agent 文件并重新执行直连与原生派发验收。DeepSeek 官方对 V4 Pro 的服务端版本升级不改变 API slug，仍使用 `deepseek-v4-pro`。
+首次配置未指定模型时默认使用 `deepseek-v4-flash-vision-exp`；如需使用 Pro，必须显式指定 `deepseek-v4-pro`。模型目录同时注册两个官方模型，Agent 文件只绑定当前选择。切换模型时管理程序会更新 Agent 文件并重新执行直连与原生派发验收。DeepSeek 官方对 V4 Pro 的服务端版本升级不改变 API slug，仍使用 `deepseek-v4-pro`。

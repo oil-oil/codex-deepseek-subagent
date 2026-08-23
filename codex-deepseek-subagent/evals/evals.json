@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash Vision Experimental 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
+      "expected_output": "先运行 status；用户未指定模型时默认使用 DeepSeek V4 Flash Vision Experimental，不要求额外选择；只有用户明确要求 Pro 时才使用 DeepSeek V4 Pro。随后检查凭据并仅通过标准输入保存到系统凭据库，配置与验收使用桌面内置运行时。",
       "files": []
     },
     {
