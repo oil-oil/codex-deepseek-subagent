@@ -4,10 +4,6 @@
 
 把 `deepseek-v4-flash-vision-exp` 或 `deepseek-v4-pro` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。Vision Experimental 在 Flash 的基础上支持文本、截图和图片输入；视频仍需由父 Agent 先转成文字事实。
 
-## Maintained fork
-
-这是 [oil-oil/codex-deepseek-subagent](https://github.com/oil-oil/codex-deepseek-subagent) 的维护型 fork，由 [Fr4nkMut5um1](https://github.com/Fr4nkMut5um1) 维护。原作者版权和 MIT License 保留在本项目中；与上游的差异和新增修复会在提交记录与 Release notes 中说明。
-
 ## 适用范围
 
 这个 Skill 只用于：
@@ -29,7 +25,7 @@
 1. 全局安装 Skill：
 
 ```bash
-npx skills add Fr4nkMut5um1/codex-deepseek-subagent -g -y
+npx skills add oil-oil/codex-deepseek-subagent -g -y
 ```
 
 2. 重启桌面应用并新建任务，让 Skill 生效。
