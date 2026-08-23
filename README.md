@@ -2,7 +2,7 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：将 DeepSeek 注册为 Codex 原生子 Agent">
 </p>
 
-把 `deepseek-v4-flash` 或 `deepseek-v4-pro` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。DeepSeek V4 Pro 的 8·13 更新继续使用 `deepseek-v4-pro` API 标识。
+把 `deepseek-v4-flash-vision-exp` 或 `deepseek-v4-pro` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。Vision Experimental 在 Flash 的基础上支持文本、截图和图片输入；视频仍需由父 Agent 先转成文字事实。
 
 ## 适用范围
 
@@ -38,7 +38,7 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 
 4. Codex 会先让你选择模型：
 
-   - `DeepSeek V4 Flash`：更快、更省，适合日常编码；
+   - `DeepSeek V4 Flash Vision Experimental`：更快、更省，并支持文本、截图和图片输入；
    - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
 
 5. 选择后，Codex 会在缺少凭据时索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
@@ -56,8 +56,8 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 - 日常任务只能由主 Agent 直接调用 `spawn_agent(agent_type="DeepSeek", fork_turns="none")`。
 - 配置与验收只使用桌面应用内置运行时；版本仅作诊断，实际能力以真实派发结果为准。
 - 父模型从当前配置读取；切换父模型后运行 `repair`。
-- DeepSeek 模型可以随时切换；`repair --model deepseek-v4-pro` 或 `repair --model deepseek-v4-flash` 会更新配置并重新验收。
-- DeepSeek 只处理文本。图片、视频、截图等视觉输入必须由父 Agent 先识别并整理成文字。
+- DeepSeek 模型可以随时切换；`repair --model deepseek-v4-pro` 或 `repair --model deepseek-v4-flash-vision-exp` 会更新配置并重新验收。
+- 按当前模型能力：`deepseek-v4-pro` 只处理文本；旧的 `deepseek-v4-flash` 只处理文本并仅用于兼容迁移；`deepseek-v4-flash-vision-exp` 可以处理文本、截图和图片，但视频仍需要主 Agent 先转成文字事实。
 - 当前工具若不认识 `DeepSeek` 角色，只提示用户打开新任务或重启 Codex；不得用脚本或 `codex exec` 代做用户任务。
 
 v1/v2 路由原因、配置位置和回滚规则见 [兼容性说明](codex-deepseek-subagent/references/compatibility.md)。
@@ -72,7 +72,7 @@ macOS：
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py test --json
-python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-v4-flash --json
+python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-v4-flash-vision-exp --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
@@ -83,7 +83,7 @@ Windows：
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py status --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py test --json
-py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-v4-flash --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-v4-flash-vision-exp --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py disable --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
 ```
@@ -94,7 +94,7 @@ py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
 
 ```text
 model_provider = deepseek
-model = deepseek-v4-flash 或 deepseek-v4-pro（必须等于所选模型）
+model = deepseek-v4-flash-vision-exp 或 deepseek-v4-pro（必须等于所选模型）
 reasoning_effort = high
 agent_role = DeepSeek
 ```

@@ -34,7 +34,8 @@ except ImportError:  # macOS / Linux
     msvcrt = None
 
 
-FLASH_MODEL = "deepseek-v4-flash"
+LEGACY_FLASH_MODEL = "deepseek-v4-flash"
+FLASH_MODEL = "deepseek-v4-flash-vision-exp"
 PRO_MODEL = "deepseek-v4-pro"
 SUPPORTED_MODELS = (FLASH_MODEL, PRO_MODEL)
 # 保留旧常量，供旧版测试夹具和 schema 迁移识别；运行时不再依赖它选模型。
@@ -42,8 +43,8 @@ MODEL = FLASH_MODEL
 MODEL_OPTIONS = [
     {
         "id": FLASH_MODEL,
-        "label": "DeepSeek V4 Flash",
-        "description": "速度更快、成本更低，适合日常编码和高频任务。",
+        "label": "DeepSeek V4 Flash Vision Experimental",
+        "description": "保留 Flash 的速度与成本优势，并支持文本、截图和图片输入；视频仍需由父 Agent 先转成文字事实。",
     },
     {
         "id": PRO_MODEL,
@@ -124,7 +125,7 @@ def sha256_bytes(data: bytes) -> str:
 
 
 def sha256_text_file(path: Path) -> str:
-    normalized = path.read_text().replace("\r\n", "\n").replace("\r", "\n")
+    normalized = path.read_text(encoding="utf-8").replace("\r\n", "\n").replace("\r", "\n")
     return sha256_bytes(normalized.encode())
 
 
@@ -520,8 +521,30 @@ def remove_table_bool_if_value(text: str, table: str, key: str, expected: bool) 
 
 
 def expected_agent_text(model: str = MODEL) -> str:
+    if model == FLASH_MODEL:
+        description = (
+            "Vision-capable DeepSeek subagent for coding, repository research, review, "
+            "verification, screenshots, and image inspection. It accepts text, screenshots, "
+            "and images; videos must be converted to textual facts by the parent agent first."
+        )
+        visual_instructions = (
+            "You can inspect text, screenshots, and images supplied to this task. "
+            "You cannot process video directly; if video evidence is required, ask the parent "
+            "agent to provide a textual description or extracted frames."
+        )
+    else:
+        description = (
+            "Text-only DeepSeek subagent for coding, repository research, review, and verification. "
+            "Do not use it for image, video, screenshot, or other visual inspection; the parent "
+            "agent must inspect visual inputs and pass the findings as text."
+        )
+        visual_instructions = (
+            "You are text-only. Do not claim to inspect images, videos, screenshots, or other "
+            "visual inputs. If visual evidence is required and the parent did not provide a "
+            "textual description, report that limitation clearly."
+        )
     return f'''name = "{ROLE}"
-description = "Text-only DeepSeek subagent for coding, repository research, review, and verification. Do not use it for image, video, screenshot, or other visual inspection; the parent agent must inspect visual inputs and pass the findings as text."
+description = "{description}"
 model = "{model}"
 model_provider = "{PROVIDER}"
 model_reasoning_effort = "{EFFORT}"
@@ -529,7 +552,7 @@ developer_instructions = """
 You are a focused DeepSeek subagent running inside Codex.
 
 Complete the bounded task assigned by the parent agent, use available tools when needed, and return a concise evidence-based result.
-You are text-only. Do not claim to inspect images, videos, screenshots, or other visual inputs. If visual evidence is required and the parent did not provide a textual description, report that limitation clearly.
+{visual_instructions}
 Do not spawn additional subagents unless the user or parent explicitly asks for nested delegation.
 """
 '''
@@ -611,6 +634,22 @@ def compatible_existing(parsed: dict[str, Any], paths: Paths) -> tuple[bool, lis
     return not issues, issues
 
 
+def parse_official_model_catalog(script: str) -> dict[str, Any]:
+    """Extract the JSON heredoc from current and older official setup scripts."""
+    normalized = script.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.search(
+        r"cat\s+>\s+\"[^\"]+\"\s+<<'CODEX_MODELS_JSON'\n(.*?)\nCODEX_MODELS_JSON",
+        normalized,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ManagerError("official_catalog_changed", "DeepSeek 官方安装脚本格式已变化，未执行任何远程脚本。")
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录不是有效 JSON。") from exc
+
+
 def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
     request = urllib.request.Request(
         OFFICIAL_SETUP_URL,
@@ -621,17 +660,7 @@ def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
             script = response.read().decode("utf-8")
     except Exception as exc:
         raise ManagerError("official_catalog_unavailable", "无法获取 DeepSeek 官方 Codex 模型目录。") from exc
-    match = re.search(
-        r"cat > \"\$TMP_MODELS\" <<'CODEX_MODELS_JSON'\n(.*?)\nCODEX_MODELS_JSON",
-        script,
-        flags=re.DOTALL,
-    )
-    if not match:
-        raise ManagerError("official_catalog_changed", "DeepSeek 官方安装脚本格式已变化，未执行任何远程脚本。")
-    try:
-        payload = json.loads(match.group(1))
-    except json.JSONDecodeError as exc:
-        raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录不是有效 JSON。") from exc
+    payload = parse_official_model_catalog(script)
     models = {
         model.get("slug"): model
         for model in payload.get("models", [])
@@ -649,6 +678,9 @@ def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
 def configured_deepseek_model(paths: Paths) -> str | None:
     manifest = read_manifest(paths)
     selected = manifest.get("selected_model")
+    if selected == LEGACY_FLASH_MODEL:
+        # Migrate the previous Flash selection to the replacement vision model.
+        return FLASH_MODEL
     if selected in SUPPORTED_MODELS:
         return selected
     if manifest and manifest.get("schema_version", 1) < 4:
@@ -692,7 +724,7 @@ def load_base_catalog(codex_bin: str, paths: Paths, config: dict[str, Any]) -> d
         candidate = Path(configured_path).expanduser()
         if candidate.is_file():
             try:
-                data = json.loads(candidate.read_text())
+                data = json.loads(candidate.read_text(encoding="utf-8"))
                 if isinstance(data.get("models"), list):
                     return data
             except (OSError, json.JSONDecodeError):
@@ -747,7 +779,7 @@ def read_manifest(paths: Paths) -> dict[str, Any]:
     if not paths.manifest.is_file():
         return {}
     try:
-        payload = json.loads(paths.manifest.read_text())
+        payload = json.loads(paths.manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     return payload if isinstance(payload, dict) else {}
@@ -755,7 +787,7 @@ def read_manifest(paths: Paths) -> dict[str, Any]:
 
 def install(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]:
     paths.home.mkdir(parents=True, exist_ok=True)
-    config_text = paths.config.read_text() if paths.config.is_file() else ""
+    config_text = paths.config.read_text(encoding="utf-8") if paths.config.is_file() else ""
     parsed = parse_toml_text(config_text) if config_text.strip() else {}
     previous_manifest = read_manifest(paths)
     provider_marker_present = PROVIDER_BEGIN in config_text and PROVIDER_END in config_text
@@ -766,7 +798,7 @@ def install(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]
     if not compatible:
         raise ManagerError("conflict", "发现不兼容的现有 DeepSeek 配置。", {"fields": conflicts})
     target_agent_text = expected_agent_text(selected_model)
-    if paths.agent.is_file() and paths.agent.read_text() != target_agent_text:
+    if paths.agent.is_file() and paths.agent.read_text(encoding="utf-8") != target_agent_text:
         managed_agent_unchanged = bool(previous_manifest.get("managed_agent_file")) and (
             sha256_text_file(paths.agent) == previous_manifest.get("agent_sha256")
         )
@@ -928,7 +960,7 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
     parsed: dict[str, Any] = {}
     if paths.config.is_file():
         try:
-            parsed = parse_toml_text(paths.config.read_text())
+            parsed = parse_toml_text(paths.config.read_text(encoding="utf-8"))
             checks["config_valid"] = True
         except ManagerError as exc:
             checks["config_valid"] = False
@@ -950,7 +982,7 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
     checks["parent_model_configured"] = bool(parent_model)
     if paths.catalog.is_file():
         try:
-            data = json.loads(paths.catalog.read_text())
+            data = json.loads(paths.catalog.read_text(encoding="utf-8"))
             registered = {item.get("slug") for item in data.get("models", [])}
             checks["supported_models_registered"] = all(
                 model in registered for model in SUPPORTED_MODELS
@@ -975,7 +1007,7 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         checks["model_registered"] = False
         checks["parent_uses_plaintext_v1"] = False
     checks["agent_content_valid"] = bool(selected_model) and paths.agent.is_file() and (
-        paths.agent.read_text() == expected_agent_text(selected_model)
+        paths.agent.read_text(encoding="utf-8") == expected_agent_text(selected_model)
     )
 
     version: tuple[int, int, int] | None = None
@@ -1052,7 +1084,7 @@ def direct_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, 
 
 
 def choose_parent_model(paths: Paths) -> str:
-    parsed = parse_toml_text(paths.config.read_text())
+    parsed = parse_toml_text(paths.config.read_text(encoding="utf-8"))
     parent_model = configured_parent_model(parsed)
     if not parent_model:
         raise ManagerError("parent_model_unconfigured", "桌面配置中没有明确的非 DeepSeek 父模型。")
@@ -1285,7 +1317,7 @@ def disable(paths: Paths) -> dict[str, Any]:
             )
     changed = False
     if paths.config.is_file():
-        text = paths.config.read_text()
+        text = paths.config.read_text(encoding="utf-8")
         updated = remove_marked_block(text, ROLE_BEGIN, ROLE_END)
         if manifest.get("managed_multi_agent_v2"):
             previous = manifest.get("previous_multi_agent_v2")
@@ -1327,7 +1359,7 @@ def uninstall(paths: Paths, remove_credential: bool) -> dict[str, Any]:
     try:
         disabled = disable(paths)
         if paths.config.is_file():
-            text = paths.config.read_text()
+            text = paths.config.read_text(encoding="utf-8")
             if manifest.get("managed_provider_block"):
                 text = remove_marked_block(text, PROVIDER_BEGIN, PROVIDER_END)
             if manifest.get("managed_catalog_selection"):
