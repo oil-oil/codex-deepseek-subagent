@@ -32,6 +32,10 @@ def deepseek_models() -> dict[str, dict[str, str]]:
     return {slug: {"slug": slug} for slug in manager.SUPPORTED_MODELS}
 
 
+def write_utf8(path: Path, data: str) -> None:
+    path.write_text(data, encoding="utf-8")
+
+
 class ManagerTests(unittest.TestCase):
     def test_managed_block_is_idempotent(self) -> None:
         original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent = true\n'
@@ -139,6 +143,42 @@ class ManagerTests(unittest.TestCase):
         self.assertIn('model_reasoning_effort = "high"', text)
         self.assertIn("text-only", text)
         self.assertIn("Do not spawn additional subagents", text)
+
+    def test_vision_agent_accepts_images_but_not_video(self) -> None:
+        text = manager.expected_agent_text(manager.FLASH_MODEL)
+        self.assertIn(f'model = "{manager.FLASH_MODEL}"', text)
+        self.assertIn("screenshots", text)
+        self.assertIn("images", text)
+        self.assertIn("videos must be converted", text)
+        self.assertNotIn("You are text-only", text)
+
+    def test_legacy_flash_selection_migrates_to_vision_model(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            paths = manager.resolve_paths(directory)
+            manager.write_manifest(
+                paths,
+                {"schema_version": 4, "selected_model": manager.LEGACY_FLASH_MODEL},
+            )
+            self.assertEqual(
+                manager.resolve_selected_model(paths, None),
+                manager.FLASH_MODEL,
+            )
+
+    def test_official_catalog_parser_accepts_current_heredoc_target(self) -> None:
+        payload = {
+            "models": [
+                {"slug": manager.LEGACY_FLASH_MODEL},
+                {"slug": manager.PRO_MODEL},
+                {"slug": manager.FLASH_MODEL},
+            ]
+        }
+        script = (
+            "write_models_json() {\n"
+            "  cat > \"$1\" <<'CODEX_MODELS_JSON'\n"
+            + __import__("json").dumps(payload)
+            + "\nCODEX_MODELS_JSON\n}\n"
+        )
+        self.assertEqual(manager.parse_official_model_catalog(script), payload)
 
     def test_model_selection_prefers_explicit_then_preserves_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -278,14 +318,14 @@ class ManagerTests(unittest.TestCase):
         ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 'model = "gpt-5.6-sol"\n'
                 f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 "[features]\n"
                 "multi_agent_v2 = false\n"
                 + manager.managed_provider_block()
             )
-            paths.catalog.write_text(
+            write_utf8(paths.catalog,
                 json.dumps(
                     {
                         "models": [
@@ -296,7 +336,7 @@ class ManagerTests(unittest.TestCase):
                 )
             )
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             manager.write_manifest(
                 paths,
                 {"schema_version": 4, "selected_model": manager.FLASH_MODEL},
@@ -312,7 +352,7 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             stdout = (
                 json.dumps(
                     {
@@ -365,7 +405,7 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             events = [
                 {
                     "type": "item.completed",
@@ -402,7 +442,7 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             events = [
                 {
                     "type": "item.completed",
@@ -513,7 +553,7 @@ class ManagerTests(unittest.TestCase):
         ), mock.patch.object(manager, "credential_has_key", return_value=True):
             paths = manager.resolve_paths(directory)
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text(manager.PRO_MODEL))
+            write_utf8(paths.agent, manager.expected_agent_text(manager.PRO_MODEL))
             result = manager.setup(paths, "desktop-codex", False, False, None)
             self.assertEqual(result["status"], "model_selection_required")
             self.assertFalse(paths.config.exists())
@@ -562,15 +602,15 @@ class ManagerTests(unittest.TestCase):
             paths = manager.resolve_paths(directory)
             external_catalog = "/tmp/catalog-before-deepseek.json"
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 f'model = "gpt-5.6-sol"\n'
                 f'model_catalog_json = "{external_catalog}"\n'
                 "[features]\n"
                 "multi_agent_v2 = true\n"
             )
-            paths.catalog.write_text(json.dumps({"models": [{"slug": "original"}]}))
+            write_utf8(paths.catalog, json.dumps({"models": [{"slug": "original"}]}))
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             base = {"models": [{"slug": "gpt-5.6-sol"}, {"slug": "gpt-other"}]}
             patches = [
                 mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
@@ -595,14 +635,14 @@ class ManagerTests(unittest.TestCase):
             self.assertTrue(manifest["managed_multi_agent_v2"])
             self.assertTrue(manifest["previous_multi_agent_v2"])
             self.assertFalse(
-                manager.parse_toml_text(paths.config.read_text())["features"]["multi_agent_v2"]
+                manager.parse_toml_text(paths.config.read_text(encoding="utf-8"))["features"]["multi_agent_v2"]
             )
 
     def test_setup_can_switch_managed_agent_from_flash_to_pro(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             base = {"models": [{"slug": "gpt-5.6-sol"}]}
             patches = [
                 mock.patch.object(
@@ -632,14 +672,14 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(first["selected_model"], manager.FLASH_MODEL)
             self.assertEqual(second["selected_model"], manager.PRO_MODEL)
             self.assertEqual(
-                manager.parse_toml_text(paths.agent.read_text())["model"],
+                manager.parse_toml_text(paths.agent.read_text(encoding="utf-8"))["model"],
                 manager.PRO_MODEL,
             )
             manifest = manager.read_manifest(paths)
             self.assertEqual(manifest["schema_version"], 4)
             self.assertEqual(manifest["selected_model"], manager.PRO_MODEL)
             registered = {
-                item["slug"] for item in json.loads(paths.catalog.read_text())["models"]
+                item["slug"] for item in json.loads(paths.catalog.read_text(encoding="utf-8"))["models"]
             }
             self.assertTrue(set(manager.SUPPORTED_MODELS).issubset(registered))
 
@@ -647,7 +687,7 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             base = {"models": [{"slug": "gpt-5.6-sol"}]}
             patches = [
                 mock.patch.object(
@@ -665,7 +705,7 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(repaired["selected_model"], manager.PRO_MODEL)
             self.assertIn(
                 f'model = "{manager.PRO_MODEL}"',
-                paths.agent.read_text(),
+                paths.agent.read_text(encoding="utf-8"),
             )
 
     def test_uninstall_restores_preexisting_catalog_and_selection(self) -> None:
@@ -674,15 +714,15 @@ class ManagerTests(unittest.TestCase):
             external_catalog = "/tmp/catalog-before-uninstall.json"
             original_catalog = {"models": [{"slug": "original", "custom": True}]}
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 f'model = "gpt-5.6-sol"\n'
                 f'model_catalog_json = "{external_catalog}"\n'
                 "[features]\n"
                 "multi_agent_v2 = true\n"
             )
-            paths.catalog.write_text(json.dumps(original_catalog) + "\n")
+            write_utf8(paths.catalog, json.dumps(original_catalog) + "\n")
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             patches = [
                 mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(
@@ -697,23 +737,23 @@ class ManagerTests(unittest.TestCase):
                 result = manager.uninstall(paths, remove_credential=False)
             self.assertTrue(result["catalog_restored"])
             self.assertFalse(result["catalog_removed"])
-            self.assertEqual(json.loads(paths.catalog.read_text()), original_catalog)
-            parsed = manager.parse_toml_text(paths.config.read_text())
+            self.assertEqual(json.loads(paths.catalog.read_text(encoding="utf-8")), original_catalog)
+            parsed = manager.parse_toml_text(paths.config.read_text(encoding="utf-8"))
             self.assertEqual(parsed["model_catalog_json"], external_catalog)
             self.assertTrue(parsed["features"]["multi_agent_v2"])
-            self.assertNotIn(manager.PROVIDER_BEGIN, paths.config.read_text())
+            self.assertNotIn(manager.PROVIDER_BEGIN, paths.config.read_text(encoding="utf-8"))
             self.assertTrue(paths.agent.is_file())
 
     def test_schema_v1_repair_then_uninstall_removes_managed_catalog_selection(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 'model = "gpt-5.6-sol"\n'
                 f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 + manager.managed_provider_block()
             )
-            paths.catalog.write_text(
+            write_utf8(paths.catalog,
                 json.dumps(
                     {
                         "models": [
@@ -725,7 +765,7 @@ class ManagerTests(unittest.TestCase):
                 + "\n"
             )
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             manager.write_manifest(
                 paths,
                 {
@@ -754,7 +794,7 @@ class ManagerTests(unittest.TestCase):
                 self.assertTrue(manifest["managed_catalog_selection"])
                 self.assertFalse(manifest["catalog_preexisted"])
                 manager.uninstall(paths, remove_credential=False)
-            parsed = manager.parse_toml_text(paths.config.read_text())
+            parsed = manager.parse_toml_text(paths.config.read_text(encoding="utf-8"))
             self.assertNotIn("model_catalog_json", parsed)
             self.assertFalse(paths.catalog.exists())
 
@@ -762,14 +802,14 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 'model = "gpt-5.6-sol"\n'
                 f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 + manager.managed_provider_block()
             )
-            paths.catalog.write_text(json.dumps({"models": [{"slug": manager.MODEL}]}) + "\n")
+            write_utf8(paths.catalog, json.dumps({"models": [{"slug": manager.MODEL}]}) + "\n")
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             manager.write_manifest(
                 paths,
                 {
@@ -808,7 +848,7 @@ class ManagerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text('model = "gpt-5.6-sol"\n')
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n')
             base = {
                 "models": [
                     {"slug": "gpt-5.6-sol", "multi_agent_version": "original-sol"},
@@ -824,11 +864,11 @@ class ManagerTests(unittest.TestCase):
             ]
             with patches[0], patches[1], patches[2], patches[3], patches[4]:
                 manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
-                paths.config.write_text(
-                    manager.set_top_level_key(paths.config.read_text(), "model", "gpt-5.6-terra")
+                write_utf8(paths.config,
+                    manager.set_top_level_key(paths.config.read_text(encoding="utf-8"), "model", "gpt-5.6-terra")
                 )
                 manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
-            catalog = json.loads(paths.catalog.read_text())
+            catalog = json.loads(paths.catalog.read_text(encoding="utf-8"))
             by_slug = {item["slug"]: item for item in catalog["models"]}
             self.assertEqual(by_slug["gpt-5.6-sol"]["multi_agent_version"], "original-sol")
             self.assertEqual(by_slug["gpt-5.6-terra"]["multi_agent_version"], manager.PARENT_MULTI_AGENT_VERSION)
@@ -848,7 +888,7 @@ class ManagerTests(unittest.TestCase):
                 f"config_file = {manager.toml_string(str(paths.agent))}\n"
                 f"{manager.ROLE_END}\n"
             )
-            paths.config.write_text('model = "gpt-5.6-sol"\n' + legacy_role)
+            write_utf8(paths.config, 'model = "gpt-5.6-sol"\n' + legacy_role)
             patches = [
                 mock.patch.object(manager, "fetch_official_deepseek_models", return_value=deepseek_models()),
                 mock.patch.object(
@@ -859,18 +899,18 @@ class ManagerTests(unittest.TestCase):
             ]
             with patches[0], patches[1]:
                 manager.install(paths, "codex", manager.FLASH_MODEL)
-            config_text = paths.config.read_text()
+            config_text = paths.config.read_text(encoding="utf-8")
             self.assertNotIn(manager.ROLE_BEGIN, config_text)
             self.assertNotIn(manager.ROLE_END, config_text)
             self.assertNotIn("[agents.DeepSeek]", config_text)
-            self.assertEqual(paths.agent.read_text(), manager.expected_agent_text())
+            self.assertEqual(paths.agent.read_text(encoding="utf-8"), manager.expected_agent_text())
             self.assertTrue(manager.read_manifest(paths)["legacy_role_block_removed"])
 
     def test_install_removes_compatible_unmarked_legacy_role(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 'model = "gpt-5.6-sol"\n'
                 "[agents.DeepSeek]\n"
                 'description = "legacy role registration"\n'
@@ -890,7 +930,7 @@ class ManagerTests(unittest.TestCase):
             ]
             with patches[0], patches[1]:
                 manager.install(paths, "codex", manager.FLASH_MODEL)
-            config_text = paths.config.read_text()
+            config_text = paths.config.read_text(encoding="utf-8")
             self.assertNotIn("[agents.DeepSeek]", config_text)
             self.assertTrue(manager.read_manifest(paths)["legacy_role_block_removed"])
 
@@ -902,7 +942,7 @@ class ManagerTests(unittest.TestCase):
         ), mock.patch.object(manager, "codex_version_text", return_value="codex-cli test"):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
-            paths.config.write_text(
+            write_utf8(paths.config,
                 'model = "gpt-5.6-sol"\n'
                 f"model_catalog_json = {manager.toml_string(str(paths.catalog))}\n"
                 "[features]\n"
@@ -912,7 +952,7 @@ class ManagerTests(unittest.TestCase):
                 'description = "legacy role registration"\n'
                 f"config_file = {manager.toml_string(str(paths.agent))}\n"
             )
-            paths.catalog.write_text(
+            write_utf8(paths.catalog,
                 json.dumps(
                     {
                         "models": [
@@ -926,7 +966,7 @@ class ManagerTests(unittest.TestCase):
                 )
             )
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text())
+            write_utf8(paths.agent, manager.expected_agent_text())
             manager.write_manifest(paths, {"schema_version": 2})
             self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "partial")
             patches = [
@@ -943,7 +983,7 @@ class ManagerTests(unittest.TestCase):
             ]
             with patches[0], patches[1]:
                 manager.install(paths, "codex", manager.FLASH_MODEL)
-            self.assertNotIn('[agents."DeepSeek"]', paths.config.read_text())
+            self.assertNotIn('[agents."DeepSeek"]', paths.config.read_text(encoding="utf-8"))
             self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "configured")
 
     def test_status_reports_partial_for_empty_home(self) -> None:

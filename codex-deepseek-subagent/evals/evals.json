@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
+      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash Vision Experimental 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
       "files": []
     },
     {
@@ -34,7 +34,7 @@
     {
       "id": 6,
       "prompt": "让 DeepSeek 看一下这张截图并修复界面。",
-      "expected_output": "说明 DeepSeek 不处理视觉输入；由父 Agent 先识别截图并整理成文字后，再决定是否派发文字任务。",
+      "expected_output": "说明 V4 Pro 只处理文本；若当前选择的是 V4 Flash Vision Experimental，则它可以处理文本、截图和图片，但视频仍需由父 Agent 先转成文字事实。",
       "files": []
     },
     {
@@ -53,6 +53,12 @@
       "id": 9,
       "prompt": "我现在用 Flash，切换到 Pro。",
       "expected_output": "运行 repair --model deepseek-v4-pro，更新受管 Agent 文件并重新执行完整验收；不要求重新输入已有 API Key。",
+      "files": []
+    },
+    {
+      "id": 10,
+      "prompt": "配置 DeepSeek V4 Flash Vision Experimental 作为子 Agent。",
+      "expected_output": "使用 API slug deepseek-v4-flash-vision-exp，运行 setup --model deepseek-v4-flash-vision-exp；角色说明允许文本、截图和图片输入，但明确视频仍需由父 Agent 转成文字事实。",
       "files": []
     }
   ]
