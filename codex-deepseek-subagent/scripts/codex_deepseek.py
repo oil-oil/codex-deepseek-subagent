@@ -1231,6 +1231,7 @@ def setup(
     api_key_stdin: bool,
     skip_live_test: bool,
     requested_model: str | None,
+    api_key_env: bool = False,
 ) -> dict[str, Any]:
     selected_model = resolve_selected_model(paths, requested_model)
     if not selected_model:
@@ -1243,7 +1244,9 @@ def setup(
         raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
     if not credential_has_key():
-        if api_key_stdin:
+        if api_key_env:
+            secret = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+        elif api_key_stdin:
             secret = sys.stdin.readline().strip()
         elif sys.stdin.isatty():
             secret = getpass.getpass("DeepSeek API Key（隐藏输入）：").strip()
@@ -1433,7 +1436,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("command", choices=("status", "setup", "test", "repair", "disable", "uninstall"))
     parser.add_argument("--codex-home")
-    parser.add_argument("--api-key-stdin", action="store_true")
+    credential_input = parser.add_mutually_exclusive_group()
+    credential_input.add_argument("--api-key-stdin", action="store_true")
+    credential_input.add_argument("--api-key-env", action="store_true", help="仅从可信包装器注入的 DEEPSEEK_API_KEY 配置运行时凭据")
     parser.add_argument("--model", choices=SUPPORTED_MODELS)
     parser.add_argument("--skip-live-test", action="store_true")
     parser.add_argument("--remove-credential", action="store_true")
@@ -1453,6 +1458,7 @@ def main() -> int:
                         args.api_key_stdin,
                         args.skip_live_test,
                         args.model,
+                        api_key_env=args.api_key_env,
                     )
                 elif args.command == "test":
                     payload = run_tests(paths, codex_bin or "")

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "id": "codex-deepseek-subagent",
+  "label": "子 Agent 模型 API Key",
+  "credential": "codex-deepseek-subagent/setup/default",
+  "ui": {
+    "title": "配置服务",
+    "placeholder": "粘贴该服务的 API Key",
+    "saveLabel": "保存"
+  }
+}

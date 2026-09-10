@@ -2,7 +2,7 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：将 DeepSeek 注册为 Codex 原生子 Agent">
 </p>
 
-把 `deepseek-v4-flash` 或 `deepseek-v4-pro` 注册为 Codex 原生自定义子 Agent，并验证实际派发路由。DeepSeek V4 Pro 的 8·13 更新继续使用 `deepseek-v4-pro` API 标识。
+配置和维护桌面应用中的原生子 Agent，支持选择模型、检查路由、修复、停用和卸载。
 
 ## 适用范围
 
@@ -41,7 +41,7 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
    - `DeepSeek V4 Flash`：更快、更省，适合日常编码；
    - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
 
-5. 选择后，Codex 会在缺少凭据时引导你到可信终端隐藏输入，保存到系统凭据库；不会索要聊天中的 API Key，然后自动配置并验收。
+5. 选择后，Agent 会在缺少凭据时展示本机配置页，再通过包装器接入运行时原生凭据并验收；不会索要聊天中的 API Key。
 
 6. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
@@ -70,7 +70,7 @@ macOS：
 
 ```bash
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
-python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
+node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-env --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py test --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-v4-flash --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
@@ -81,7 +81,7 @@ Windows：
 
 ```powershell
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py status --json
-py -3 codex-deepseek-subagent\scripts\codex_deepseek.py setup --model deepseek-v4-pro --api-key-stdin --json
+node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- py -3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-env --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py test --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-v4-flash --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py disable --json
@@ -109,7 +109,7 @@ NATIVE_DEEPSEEK_OK
 
 ## 安全与回滚
 
-- API Key 只通过标准输入传入；macOS 保存到 Keychain，Windows 保存到 Credential Manager。配置、临时文件和测试输出均不包含密钥。
+- API Key 默认通过固定页面保存，再由可信包装器注入配置程序；标准输入仅供显式选择的兼容入口。macOS 保存到 Keychain，Windows 保存到 Credential Manager。配置、临时文件和测试输出均不包含密钥。
 - 配置和模型目录写入前会创建备份；解析或实时测试失败会恢复本次事务。
 - 不修改主任务的顶层模型或登录方式。
 
@@ -132,7 +132,7 @@ python3 scripts/build_readme_assets.py
 
 ## 配置、依赖与使用边界
 
-依赖兼容的 Codex 桌面、Python 3.11+、macOS 或 Windows 系统凭据库；API Key 通过可信终端隐藏输入或凭据程序传入。
+依赖兼容的 Codex 桌面、Python 3.11+、macOS 或 Windows 系统凭据库；API Key 默认通过固定页面和业务包装器接入。
 
 仅配置、诊断与验收，普通编码不重新运行安装；它是宿主专用适配，不宣称所有 Agent 通用。
 
@@ -141,3 +141,9 @@ python3 scripts/build_readme_assets.py
 ```text
 把 DeepSeek 配置成我的原生子 Agent，缺少配置时指引我完成。
 ```
+
+## API Key 配置页面
+
+首次使用外部服务时，可以在本机配置页亲自填写 Key；已有配置会复用，密钥存入系统凭据库。只为实际使用的外部服务配置；纯本地处理不需要 Key。页面需要 Node.js 22.18+ 与可用的系统凭据服务，业务运行仍使用原依赖。
+
+安装、状态检查、打开页面和带凭据运行的完整入口见[配置说明](codex-deepseek-subagent/references/api-key-setup.md)。页面保存与业务读取已经接通；不把 Key 发进聊天，也不自动迁移旧文件。
