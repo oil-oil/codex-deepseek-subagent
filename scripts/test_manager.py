@@ -33,6 +33,29 @@ def deepseek_models() -> dict[str, dict[str, str]]:
 
 
 class ManagerTests(unittest.TestCase):
+
+    def test_page_environment_setup_preserves_existing_and_rolls_back_new_store(self):
+        for existing, fail in [(False, False), (True, False), (False, True)]:
+            with tempfile.TemporaryDirectory() as directory, mock.patch.dict(manager.os.environ, {'DEEPSEEK_API_KEY':'sk-TEST_ONLY_PAGE'}), \
+                 mock.patch.object(manager,'credential_available',return_value=True), \
+                 mock.patch.object(manager,'credential_has_key',return_value=existing), \
+                 mock.patch.object(manager,'store_credential_key') as store, \
+                 mock.patch.object(manager,'remove_credential_key') as remove, \
+                 mock.patch.object(manager,'install',side_effect=RuntimeError('failed') if fail else None,return_value={}), \
+                 mock.patch.object(manager.getpass,'getpass',side_effect=AssertionError('页面流程不能退回终端输入')):
+                paths=manager.resolve_paths(directory)
+                if fail:
+                    with self.assertRaises(RuntimeError):
+                        manager.setup(paths,'runtime',False,True,manager.PRO_MODEL,api_key_env=True)
+                    remove.assert_called_once()
+                else:
+                    result=manager.setup(paths,'runtime',False,True,manager.PRO_MODEL,api_key_env=True)
+                    self.assertEqual(result['status'],'configured')
+                    self.assertNotIn('sk-TEST_ONLY',json.dumps(result))
+                if existing:store.assert_not_called()
+                else:store.assert_called_once_with('sk-TEST_ONLY_PAGE')
+
+
     def test_managed_block_is_idempotent(self) -> None:
         original = 'model = "gpt-5.6-sol"\n\n[features]\nmulti_agent = true\n'
         with tempfile.TemporaryDirectory() as directory:

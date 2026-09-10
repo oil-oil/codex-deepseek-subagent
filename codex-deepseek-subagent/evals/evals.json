@@ -3,57 +3,66 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-test-placeholder。",
-      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据并仅通过标准输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
-      "files": []
+      "prompt": "帮我把 DeepSeek 配置成 Codex 的原生子 Agent，凭据尚未配置，不要让我把密钥发到聊天。",
+      "expected_output": "先运行 status；用户未指定模型时先让用户在 DeepSeek V4 Flash 与 V4 Pro 中选择，不静默选择。得到模型后再检查凭据，通过可信终端隐藏输入保存到系统凭据库。配置与验收使用桌面内置运行时。",
+      "files": [],
+      "name": "场景-1-帮我把 DeepSeek 配置成 Codex 的原生子 Agent，这是 API Key：sk-"
     },
     {
       "id": 2,
       "prompt": "检查一下我的 DeepSeek 子 Agent 为什么没有生效。",
       "expected_output": "先调用 status，再按结构化状态调用 test 或 repair；不使用 PATH 中的独立 CLI。验收必须检查子线程数据库 threads 元数据和 NATIVE_DEEPSEEK_OK 返回口令。",
-      "files": []
+      "files": [],
+      "name": "场景-2-检查一下我的 DeepSeek 子 Agent 为什么没有生效。"
     },
     {
       "id": 3,
       "prompt": "把 DeepSeek 子 Agent 卸载掉，但是保留 API Key。",
       "expected_output": "调用 uninstall 且不传 remove-credential，只移除本 Skill 管理的配置。",
-      "files": []
+      "files": [],
+      "name": "场景-3-把 DeepSeek 子 Agent 卸载掉，但是保留 API Key。"
     },
     {
       "id": 4,
       "prompt": "主模型刚换了，继续用 DeepSeek 子 Agent。",
       "expected_output": "从桌面当前配置读取新父模型，运行 repair 应用 v1 明文派发设置，再做一次原生路由验收；不能回退到硬编码 GPT 型号。",
-      "files": []
+      "files": [],
+      "name": "场景-4-主模型刚换了，继续用 DeepSeek 子 Agent。"
     },
     {
       "id": 5,
       "prompt": "当前 spawn_agent 工具里看不到 DeepSeek，帮我先用脚本或 codex exec 做完这个编码任务。",
       "expected_output": "拒绝用脚本或 codex exec 代做用户任务，只提示打开新 Codex 任务或重启 Codex 以加载 DeepSeek 角色。",
-      "files": []
+      "files": [],
+      "name": "场景-5-当前 spawn_agent 工具里看不到 DeepSeek，帮我先用脚本或 codex exe"
     },
     {
       "id": 6,
       "prompt": "让 DeepSeek 看一下这张截图并修复界面。",
       "expected_output": "说明 DeepSeek 不处理视觉输入；由父 Agent 先识别截图并整理成文字后，再决定是否派发文字任务。",
-      "files": []
+      "files": [],
+      "name": "场景-6-让 DeepSeek 看一下这张截图并修复界面。"
     },
     {
       "id": 7,
       "prompt": "配置成功后，日常代码审查应该怎么调用？",
       "expected_output": "主 Agent 直接调用 spawn_agent(agent_type=\"DeepSeek\")；不重复运行 setup、test、脚本或 codex exec。",
-      "files": []
+      "files": [],
+      "name": "场景-7-配置成功后，日常代码审查应该怎么调用？"
     },
     {
       "id": 8,
       "prompt": "帮我配置 DeepSeek V4 Pro 8·13 版本作为子 Agent。",
       "expected_output": "使用 API slug deepseek-v4-pro，运行 setup --model deepseek-v4-pro；完成直连和原生 spawn_agent 验收，实际线程元数据中的 model 必须是 deepseek-v4-pro。",
-      "files": []
+      "files": [],
+      "name": "场景-8-帮我配置 DeepSeek V4 Pro 8·13 版本作为子 Agent。"
     },
     {
       "id": 9,
       "prompt": "我现在用 Flash，切换到 Pro。",
       "expected_output": "运行 repair --model deepseek-v4-pro，更新受管 Agent 文件并重新执行完整验收；不要求重新输入已有 API Key。",
-      "files": []
+      "files": [],
+      "name": "场景-9-我现在用 Flash，切换到 Pro。"
     }
   ]
 }
