@@ -28,7 +28,7 @@ description: 仅在用户要求配置、选择或切换模型、检查、测试�
 1. 运行 `status --json`，根据结构化状态继续，不靠文件名猜测。
 2. 首次配置时，如果用户没有指定模型，先让用户选择：`DeepSeek V4 Flash`（更快、更省）或 `DeepSeek V4 Pro`（能力更强，推荐复杂任务）。不要替用户静默选择。
 3. 配置请求运行 `setup --model <模型> --json`；切换模型或修复配置时运行 `repair --model <模型> --json`。不传 `--model` 的 `repair` 会保留当前选择。
-4. 缺少凭据时简洁索要 API Key。收到后不要复述、回显或写入临时文件，只通过 `--api-key-stdin` 的标准输入传递。
+4. 缺少凭据时让用户在可信终端运行 setup，使用隐藏输入保存；不在聊天中索要 API Key。`--api-key-stdin` 仅供可信凭据程序传递，不拼接密钥命令。
 5. `setup`、`repair` 或 `test` 使用桌面内置运行时创建隔离验收会话。若返回 `new_task_required` 或 `restart_required`，提示用户重启桌面应用并打开新任务。
 6. 验收必须检查子线程数据库 `threads` 表的实际元数据，并确认子 Agent 返回口令 `NATIVE_DEEPSEEK_OK`。实际 `model` 必须等于用户选择的模型，两者缺一不可。
 7. 最终只汇报状态、实际 Provider、模型、思考程度、角色和备份位置；不要输出密钥或原始事件日志。
@@ -54,7 +54,7 @@ python3 <skill-dir>/scripts/codex_deepseek.py <command> --json
 
 - `ready`：直连、原生路由、数据库元数据和返回口令均通过。
 - `configured`：静态配置完整，但尚未完成实时验收。
-- `credential_missing`：索要 API Key 后继续原流程。
+- `credential_missing`：引导用户通过终端隐藏输入配置后继续原流程。
 - `model_selection_required`：向用户展示 Flash/Pro 选项，得到选择后继续原流程。
 - `operation_in_progress`：已有配置操作正在运行，稍后重试，不并发修改。
 - `conflict`：报告冲突文件和字段，等待用户决定是否替换。

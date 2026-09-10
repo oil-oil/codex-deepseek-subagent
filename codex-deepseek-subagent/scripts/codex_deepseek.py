@@ -1243,9 +1243,12 @@ def setup(
         raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
     if not credential_has_key():
-        if not api_key_stdin:
+        if api_key_stdin:
+            secret = sys.stdin.readline().strip()
+        elif sys.stdin.isatty():
+            secret = getpass.getpass("DeepSeek API Key（隐藏输入）：").strip()
+        else:
             return result("credential_missing", credential="deepseek_api_key")
-        secret = sys.stdin.readline().strip()
         if not secret:
             raise ManagerError("credential_missing", "标准输入中没有 API Key。")
         store_credential_key(secret)

@@ -41,7 +41,7 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
    - `DeepSeek V4 Flash`：更快、更省，适合日常编码；
    - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
 
-5. 选择后，Codex 会在缺少凭据时索要 API Key，通过标准输入保存到系统凭据库，然后自动配置并验收。
+5. 选择后，Codex 会在缺少凭据时引导你到可信终端隐藏输入，保存到系统凭据库；不会索要聊天中的 API Key，然后自动配置并验收。
 
 6. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
@@ -129,3 +129,15 @@ python3 scripts/build_readme_assets.py
 ## License
 
 [MIT](./LICENSE)
+
+## 配置、依赖与使用边界
+
+依赖兼容的 Codex 桌面、Python 3.11+、macOS 或 Windows 系统凭据库；API Key 通过可信终端隐藏输入或凭据程序传入。
+
+仅配置、诊断与验收，普通编码不重新运行安装；它是宿主专用适配，不宣称所有 Agent 通用。
+
+使用示例：
+
+```text
+把 DeepSeek 配置成我的原生子 Agent，缺少配置时指引我完成。
+```
