@@ -7,8 +7,7 @@
 - Python 3.11+
 - ChatGPT/Codex 桌面应用至少启动过一次
 - DeepSeek 官方 Responses API
-- `deepseek-v4-flash`
-- `deepseek-v4-pro`（包含 DeepSeek 官方在 8·13 更新的当前服务版本，API slug 不变）
+- `deepseek-flash`（默认且唯一注册的模型，当前为 DeepSeek-V4.1-Flash-1017）
 - 思考程度 `high`
 
 ## 配置位置
@@ -27,9 +26,13 @@
 
 ## 原生派发兼容性
 
+**当前 Codex 官方不支持本方案依赖的角色级 Provider 覆盖。** [官方文档](https://learn.chatgpt.com/docs/agent-configuration/subagents)规定子 Agent 继承父 Provider，角色文件中的 `model_provider` 不会覆盖它。本仓库保留历史兼容流程，不修改 Codex 内核，也不保证新版客户端可用。
+
+`status` 和跳过实时验收的安装结果会返回 `native_routing_verified: false` 以及兼容性提示。只有真实子线程的 Provider、模型、角色、思考程度和返回口令全部匹配，才返回 `ready`；实际继承父 Provider 时返回 `native_provider_inherited`。直连成功不是原生派发成功的证据。
+
 检查和验收优先使用桌面应用内置运行时。Windows 无法从常见安装位置发现运行时时，会尝试 PATH 中的 `codex.exe`；仍无法发现时需要通过 `CODEX_DESKTOP_BIN` 明确指定。版本号仅作诊断；兼容性由模型目录解析、DeepSeek 直连、原生派发、返回口令和数据库元数据共同决定。
 
-父模型从桌面当前配置动态读取。管理程序会把 `features.multi_agent_v2` 设为 `false`，并把该父模型的 `multi_agent_version` 固定为 `v1`，避免桌面端 v2 加密跨 Provider 子任务正文。父模型变化后运行 `repair`。
+父模型从桌面当前配置动态读取。管理程序保留历史 v1 兼容设置：把 `features.multi_agent_v2` 设为 `false`，并把该父模型的 `multi_agent_version` 固定为 `v1`，用于旧运行时的明文任务派发；这些设置不能解除当前客户端的 Provider 继承限制。父模型变化后运行 `repair`。
 
 日常任务只允许主 Agent 直接调用：
 
@@ -45,7 +48,7 @@ spawn_agent(agent_type="DeepSeek", fork_turns="none", ...)
 
    ```text
    model_provider = deepseek
-   model = deepseek-v4-flash 或 deepseek-v4-pro
+   model = deepseek-flash
    reasoning_effort = high
    agent_role = DeepSeek
    ```
@@ -56,7 +59,7 @@ spawn_agent(agent_type="DeepSeek", fork_turns="none", ...)
 
 ## API Key
 
-API Key 可由用户在聊天中提供。管理程序从标准输入读取，不写入命令参数、临时文件、配置文件或测试结果。macOS 将密钥保存到 Keychain，Windows 将密钥保存到 Credential Manager。
+API Key 由用户在本机固定页面保存，再由可信包装器注入；不要要求用户发到聊天。标准输入仅供显式选择的兼容入口，不把密钥拼到命令参数、临时文件、配置文件或测试结果。macOS 将密钥保存到 Keychain，Windows 将密钥保存到 Credential Manager。
 
 不要在最终回复、日志摘要、异常信息或测试夹具中重复 API Key。
 
@@ -68,11 +71,13 @@ API Key 可由用户在聊天中提供。管理程序从标准输入读取，不
 
 ## 视觉输入
 
-DeepSeek V4 Flash 与 V4 Pro 当前都只接受文本。父 Agent 必须先检查图片、视频和截图，把必要事实写成文字任务包；子 Agent 不应声称自己看过视觉材料。
+Flash 1017 模型本身支持图像输入，但本集成未对历史跨 Provider 视觉路由进行验收，仍仅派发文本。父 Agent 必须先检查图片、视频和截图，把必要事实写成文字任务包；没有收到图像的子 Agent 不应声称自己看过视觉材料。
 
-## 模型选择
+## 模型与迁移
 
-- `deepseek-v4-flash`：响应更快、成本更低，适合日常编码和高频任务。
-- `deepseek-v4-pro`：能力更强，适合复杂编码、架构分析和高难度 Agent 任务。
+- 首次配置不指定 `--model` 时默认使用 `deepseek-flash`，不再展示模型选择菜单。
+- 旧名称 `deepseek-v4-flash` 在命令行和受管 manifest 中会归一化为 `deepseek-flash`。迁移前仍检查 Agent 文件的受管哈希，拒绝覆盖用户修改。
+- 官方脚本仅下载并解析 JSON heredoc，不执行 shell 代码；兼容旧的 `$TMP_MODELS` 与新的 `$1` 重定向格式。
+- 合并目录只注册 Flash，移除旧 Flash 别名以及旧 manifest 声明的受管模型条目，保留其他未受管模型。备份、失败回滚和卸载恢复逻辑保持原样。
 
-首次配置必须明确选择模型。模型目录同时注册两个官方模型，Agent 文件只绑定当前选择。切换模型时管理程序会更新 Agent 文件并重新执行直连与原生派发验收。DeepSeek 官方对 V4 Pro 的服务端版本升级不改变 API slug，仍使用 `deepseek-v4-pro`。
+实时验收会消耗父模型和 DeepSeek 的额度。离线测试只使用模拟凭据与模拟响应，不能证明实际服务额度或跨 Provider 路由可用。

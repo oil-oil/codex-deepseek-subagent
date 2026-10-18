@@ -34,21 +34,18 @@ except ImportError:  # macOS / Linux
     msvcrt = None
 
 
-FLASH_MODEL = "deepseek-v4-flash"
-PRO_MODEL = "deepseek-v4-pro"
-SUPPORTED_MODELS = (FLASH_MODEL, PRO_MODEL)
+FLASH_MODEL = "deepseek-flash"
+LEGACY_FLASH_MODEL = "deepseek-v4-flash"
+SUPPORTED_MODELS = (FLASH_MODEL,)
+MODEL_ALIASES = {LEGACY_FLASH_MODEL: FLASH_MODEL}
+MODEL_INPUTS = (*SUPPORTED_MODELS, *MODEL_ALIASES)
 # 保留旧常量，供旧版测试夹具和 schema 迁移识别；运行时不再依赖它选模型。
 MODEL = FLASH_MODEL
 MODEL_OPTIONS = [
     {
         "id": FLASH_MODEL,
-        "label": "DeepSeek V4 Flash",
+        "label": "DeepSeek V4.1 Flash (1017)",
         "description": "速度更快、成本更低，适合日常编码和高频任务。",
-    },
-    {
-        "id": PRO_MODEL,
-        "label": "DeepSeek V4 Pro",
-        "description": "能力更强，适合复杂编码、架构分析和高难度 Agent 任务。",
     },
 ]
 PROVIDER = "deepseek"
@@ -61,6 +58,12 @@ METADATA_WAIT_SECONDS = 5.0
 LOCK_WAIT_SECONDS = 5.0
 CREDENTIAL_TARGET = "codex-deepseek-api-key"
 OFFICIAL_SETUP_URL = "https://cdn.deepseek.com/api-docs/codex-deepseek-setup-en.sh"
+NATIVE_ROUTING_WARNING = (
+    "Current Codex custom agents inherit the parent's provider; model_provider in a role "
+    "file cannot override it. This integration retains legacy routing support only. "
+    "Changing the model name or disabling multi_agent_v2 does not bypass this restriction. "
+    "Direct API success and static configuration do not prove native subagent routing."
+)
 PROVIDER_BEGIN = "# BEGIN CODEX-DEEPSEEK-SUBAGENT PROVIDER"
 PROVIDER_END = "# END CODEX-DEEPSEEK-SUBAGENT PROVIDER"
 ROLE_BEGIN = "# BEGIN CODEX-DEEPSEEK-SUBAGENT ROLE"
@@ -173,6 +176,12 @@ def find_desktop_codex() -> str:
             root = os.environ.get(variable)
             if root:
                 candidates.extend(Path(root) / relative for relative in WINDOWS_CODEX_RELATIVE_CANDIDATES)
+        local_appdata = os.environ.get("LOCALAPPDATA")
+        if local_appdata:
+            cache = Path(local_appdata) / "OpenAI" / "Codex" / "bin"
+            candidates.extend(sorted(
+                cache.glob("*/codex.exe"), key=lambda path: path.stat().st_mtime, reverse=True
+            ))
     for candidate in candidates:
         if candidate.is_file():
             return str(candidate.resolve())
@@ -611,6 +620,39 @@ def compatible_existing(parsed: dict[str, Any], paths: Paths) -> tuple[bool, lis
     return not issues, issues
 
 
+def parse_official_deepseek_models(script: str) -> dict[str, dict[str, Any]]:
+    # Read the quoted JSON heredoc, regardless of the shell redirection target.
+    match = re.search(
+        r"<<[ \t]*(['\"])CODEX_MODELS_JSON\1[ \t]*\r?\n(.*?)\r?\n"
+        r"[ \t]*CODEX_MODELS_JSON[ \t]*(?:\r?\n|$)",
+        script,
+        flags=re.DOTALL,
+    )
+    if not match:
+        raise ManagerError("official_catalog_changed", "DeepSeek 官方安装脚本格式已变化，未执行任何远程脚本。")
+    try:
+        payload = json.loads(match.group(2))
+    except json.JSONDecodeError as exc:
+        raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录不是有效 JSON。") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("models"), list):
+        raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录缺少 models 数组。")
+    models: dict[str, dict[str, Any]] = {}
+    for entry in payload["models"]:
+        if not isinstance(entry, dict) or not isinstance(entry.get("slug"), str):
+            raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录包含无效模型。")
+        original_slug = entry["slug"]
+        slug = MODEL_ALIASES.get(original_slug, original_slug)
+        if slug in SUPPORTED_MODELS and (slug not in models or original_slug == slug):
+            models[slug] = {**entry, "slug": slug}
+    missing = [model for model in SUPPORTED_MODELS if model not in models]
+    if missing:
+        raise ManagerError(
+            "official_model_missing",
+            f"DeepSeek 官方目录缺少模型：{', '.join(missing)}。",
+        )
+    return models
+
+
 def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
     request = urllib.request.Request(
         OFFICIAL_SETUP_URL,
@@ -621,34 +663,14 @@ def fetch_official_deepseek_models() -> dict[str, dict[str, Any]]:
             script = response.read().decode("utf-8")
     except Exception as exc:
         raise ManagerError("official_catalog_unavailable", "无法获取 DeepSeek 官方 Codex 模型目录。") from exc
-    match = re.search(
-        r"cat > \"\$TMP_MODELS\" <<'CODEX_MODELS_JSON'\n(.*?)\nCODEX_MODELS_JSON",
-        script,
-        flags=re.DOTALL,
-    )
-    if not match:
-        raise ManagerError("official_catalog_changed", "DeepSeek 官方安装脚本格式已变化，未执行任何远程脚本。")
-    try:
-        payload = json.loads(match.group(1))
-    except json.JSONDecodeError as exc:
-        raise ManagerError("official_catalog_invalid", "DeepSeek 官方模型目录不是有效 JSON。") from exc
-    models = {
-        model.get("slug"): model
-        for model in payload.get("models", [])
-        if model.get("slug") in SUPPORTED_MODELS
-    }
-    missing = [model for model in SUPPORTED_MODELS if model not in models]
-    if missing:
-        raise ManagerError(
-            "official_model_missing",
-            f"DeepSeek 官方目录缺少模型：{', '.join(missing)}。",
-        )
-    return models
+    return parse_official_deepseek_models(script)
 
 
 def configured_deepseek_model(paths: Paths) -> str | None:
     manifest = read_manifest(paths)
     selected = manifest.get("selected_model")
+    if isinstance(selected, str):
+        selected = MODEL_ALIASES.get(selected, selected)
     if selected in SUPPORTED_MODELS:
         return selected
     if manifest and manifest.get("schema_version", 1) < 4:
@@ -656,16 +678,19 @@ def configured_deepseek_model(paths: Paths) -> str | None:
     return None
 
 
-def resolve_selected_model(paths: Paths, requested: str | None) -> str | None:
-    if requested is not None:
-        if requested not in SUPPORTED_MODELS:
-            raise ManagerError(
-                "unsupported_model",
-                f"不支持模型 {requested}。",
-                {"model_options": MODEL_OPTIONS},
-            )
-        return requested
-    return configured_deepseek_model(paths)
+def resolve_selected_model(paths: Paths, requested: str | None) -> str:
+    selected = requested if requested is not None else read_manifest(paths).get("selected_model")
+    if selected is None:
+        return FLASH_MODEL
+    if isinstance(selected, str):
+        selected = MODEL_ALIASES.get(selected, selected)
+        if selected in SUPPORTED_MODELS:
+            return selected
+    raise ManagerError(
+        "unsupported_model",
+        "该配置只支持 deepseek-flash；请显式指定受支持模型，不自动替换未知旧配置。",
+        {"model_options": MODEL_OPTIONS},
+    )
 
 
 def run_codex_models(codex_bin: str, paths: Paths) -> dict[str, Any]:
@@ -704,10 +729,12 @@ def merged_catalog(
     base: dict[str, Any],
     deepseek_models: dict[str, dict[str, Any]],
     parent_model: str,
+    previously_managed_models: list[str] | None = None,
 ) -> dict[str, Any]:
+    managed_slugs = set(MODEL_INPUTS) | set(previously_managed_models or [])
     models = [
         model for model in base.get("models", [])
-        if model.get("slug") not in SUPPORTED_MODELS
+        if model.get("slug") not in managed_slugs
     ]
     models.extend(deepseek_models[slug] for slug in SUPPORTED_MODELS)
     parent_found = False
@@ -846,7 +873,10 @@ def install(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, Any]
             if previous_parent == parent_model
             else current_parent_entry.get("multi_agent_version")
         )
-        catalog = merged_catalog(base, deepseek_models, parent_model)
+        previous_models = previous_manifest.get("supported_models", [])
+        if not isinstance(previous_models, list) or not all(isinstance(slug, str) for slug in previous_models):
+            raise ManagerError("conflict", "旧管理记录中的 supported_models 无效，拒绝修改模型目录。")
+        catalog = merged_catalog(base, deepseek_models, parent_model, previous_models)
         catalog_bytes = (json.dumps(catalog, ensure_ascii=False, indent=2) + "\n").encode()
 
         new_config = unmanaged_config
@@ -1009,6 +1039,8 @@ def static_status(paths: Paths, codex_bin: str | None = None) -> dict[str, Any]:
         "configured" if ready else "partial",
         selected_model=selected_model,
         model_options=MODEL_OPTIONS,
+        native_routing_verified=False,
+        compatibility_warning=NATIVE_ROUTING_WARNING,
         checks=checks,
         errors=errors,
     )
@@ -1150,7 +1182,7 @@ def native_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, 
         raise ManagerError(
             "native_test_failed",
             "新 Codex 任务中的原生 spawn_agent 测试失败。",
-            {"stderr": proc.stderr[-1200:]},
+            {"stderr": proc.stderr[-1200:], "compatibility_warning": NATIVE_ROUTING_WARNING},
         )
     child_ids: list[str] = []
     child_messages: dict[str, str] = {}
@@ -1186,6 +1218,13 @@ def native_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, 
         "reasoning_effort": EFFORT,
         "agent_role": ROLE,
     }
+    if metadata and metadata.get("model_provider") != PROVIDER:
+        raise ManagerError(
+            "native_provider_inherited",
+            "子 Agent 未切换至 DeepSeek Provider；当前运行时不支持本方案的跨 Provider 派发。",
+            {"metadata": metadata, "expected": expected,
+             "compatibility_warning": NATIVE_ROUTING_WARNING},
+        )
     if len(child_ids) != 1 or child_message != "NATIVE_DEEPSEEK_OK" or metadata != expected:
         raise ManagerError(
             "native_route_mismatch",
@@ -1197,7 +1236,8 @@ def native_test(paths: Paths, codex_bin: str, selected_model: str) -> dict[str, 
                 "expected": expected,
             },
         )
-    return {"desktop_fresh_session_native": True, "child_id": child_id, **expected}
+    return {"desktop_fresh_session_native": True, "native_routing_verified": True,
+            "child_id": child_id, **expected}
 
 
 def run_tests(paths: Paths, codex_bin: str) -> dict[str, Any]:
@@ -1234,12 +1274,6 @@ def setup(
     api_key_env: bool = False,
 ) -> dict[str, Any]:
     selected_model = resolve_selected_model(paths, requested_model)
-    if not selected_model:
-        return result(
-            "model_selection_required",
-            message="请选择要配置的 DeepSeek 模型。",
-            model_options=MODEL_OPTIONS,
-        )
     if not credential_available():
         raise ManagerError("unsupported", "当前只支持 macOS 和 Windows 系统凭据库。")
     credential_created = False
@@ -1265,6 +1299,8 @@ def setup(
             return result(
                 "configured",
                 **install_result,
+                native_routing_verified=False,
+                compatibility_warning=NATIVE_ROUTING_WARNING,
                 new_task_required=True,
                 restart_required=True,
             )
@@ -1439,7 +1475,8 @@ def main() -> int:
     credential_input = parser.add_mutually_exclusive_group()
     credential_input.add_argument("--api-key-stdin", action="store_true")
     credential_input.add_argument("--api-key-env", action="store_true", help="仅从可信包装器注入的 DEEPSEEK_API_KEY 配置运行时凭据")
-    parser.add_argument("--model", choices=SUPPORTED_MODELS)
+    parser.add_argument("--model", choices=MODEL_INPUTS,
+                        help="deepseek-v4-flash is a legacy alias for deepseek-flash")
     parser.add_argument("--skip-live-test", action="store_true")
     parser.add_argument("--remove-credential", action="store_true")
     parser.add_argument("--json", action="store_true")

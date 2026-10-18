@@ -2,7 +2,15 @@
   <img src="./assets/readme/hero.svg" width="100%" alt="codex-deepseek-subagent：将 DeepSeek 注册为 Codex 原生子 Agent">
 </p>
 
-配置和维护桌面应用中的原生子 Agent，支持选择模型、检查路由、修复、停用和卸载。
+配置和维护桌面应用中的 DeepSeek Flash 子 Agent，支持检查路由、修复、停用和卸载。
+
+## 当前兼容性限制
+
+**本仓库不是当前 Codex 跨 Provider 原生子 Agent 的通用接入方案。** 当前 [Codex 官方规则](https://learn.chatgpt.com/docs/agent-configuration/subagents)明确规定，自定义子 Agent 继承父 Agent 的 Provider，角色文件中的 `model_provider` 不能覆盖它。本工具保留历史运行时的配置与验收流程；升级模型名、禁用 v2 或设置 v1 均不能绕过该限制。
+
+仅支持并默认使用 `deepseek-flash`，目前对应 DeepSeek-V4.1-Flash-1017。旧名称 `deepseek-v4-flash` 只作为迁移别名，修复后统一写入新名称。
+
+`configured` 和 `--skip-live-test` 仅表示文件已配置，不表示原生路由可用。`ready` 必须经过真实子线程路由和返回口令的双重验收。遇到 `native_provider_inherited` 时停止使用本方案；不要把 DeepSeek 直连成功当作原生子 Agent 已生效。`setup` / `repair` 验收失败会沿用原有备份恢复文件。
 
 ## 适用范围
 
@@ -25,7 +33,7 @@
 1. 全局安装 Skill：
 
 ```bash
-npx skills add oil-oil/codex-deepseek-subagent -g -y
+npx skills add alanleng7/codex-deepseek-subagent -g -y
 ```
 
 2. 重启桌面应用并新建任务，让 Skill 生效。
@@ -36,12 +44,9 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 帮我把 DeepSeek 配置成 Codex 的原生子 Agent。
 ```
 
-4. Codex 会先让你选择模型：
+4. 默认使用 `deepseek-flash`，无需选择模型；本仓库只维护 Flash 集成。
 
-   - `DeepSeek V4 Flash`：更快、更省，适合日常编码；
-   - `DeepSeek V4 Pro`：能力更强，适合复杂编码和高难度 Agent 任务。
-
-5. 选择后，Agent 会在缺少凭据时展示本机配置页，再通过包装器接入运行时原生凭据并验收；不会索要聊天中的 API Key。
+5. Agent 会在缺少凭据时展示本机配置页，再通过包装器接入运行时原生凭据并验收；不会索要聊天中的 API Key。实时验收会消耗父模型及 DeepSeek 的额度。
 
 6. 看到 `status: ready` 后，再重启桌面应用并新建任务。此后可直接说：
 
@@ -56,8 +61,8 @@ npx skills add oil-oil/codex-deepseek-subagent -g -y
 - 日常任务只能由主 Agent 直接调用 `spawn_agent(agent_type="DeepSeek", fork_turns="none")`。
 - 配置与验收只使用桌面应用内置运行时；版本仅作诊断，实际能力以真实派发结果为准。
 - 父模型从当前配置读取；切换父模型后运行 `repair`。
-- DeepSeek 模型可以随时切换；`repair --model deepseek-v4-pro` 或 `repair --model deepseek-v4-flash` 会更新配置并重新验收。
-- DeepSeek 只处理文本。图片、视频、截图等视觉输入必须由父 Agent 先识别并整理成文字。
+- `repair` 默认保留 Flash 配置，并将受管旧名称迁移为 `deepseek-flash` 后重新验收。
+- 本集成只派发文本。模型本身的图像能力不代表此历史跨 Provider 路由已通过视觉验收，图片、视频、截图仍由父 Agent 先整理成文字。
 - 当前工具若不认识 `DeepSeek` 角色，只提示用户打开新任务或重启 Codex；不得用脚本或 `codex exec` 代做用户任务。
 
 v1/v2 路由原因、配置位置和回滚规则见 [兼容性说明](codex-deepseek-subagent/references/compatibility.md)。
@@ -70,9 +75,9 @@ macOS：
 
 ```bash
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py status --json
-node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-env --json
+node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- python3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-flash --api-key-env --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py test --json
-python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-v4-flash --json
+python3 codex-deepseek-subagent/scripts/codex_deepseek.py repair --model deepseek-flash --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py disable --json
 python3 codex-deepseek-subagent/scripts/codex_deepseek.py uninstall --json
 ```
@@ -81,20 +86,20 @@ Windows：
 
 ```powershell
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py status --json
-node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- py -3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-v4-pro --api-key-env --json
+node codex-deepseek-subagent/scripts/credential-ui/src/profile.ts run default -- py -3 codex-deepseek-subagent/scripts/codex_deepseek.py setup --model deepseek-flash --api-key-env --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py test --json
-py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-v4-flash --json
+py -3 codex-deepseek-subagent\scripts\codex_deepseek.py repair --model deepseek-flash --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py disable --json
 py -3 codex-deepseek-subagent\scripts\codex_deepseek.py uninstall --json
 ```
 
-管理程序会自动寻找桌面应用内置运行时。Windows 自动发现失败时，可以通过 `CODEX_DESKTOP_BIN` 指定 `codex.exe`。
+管理程序会自动寻找桌面应用内置运行时，包括 Windows 的 `%LOCALAPPDATA%\OpenAI\Codex\bin\<hash>\codex.exe` 缓存。存在多个缓存时优先最近更新的文件；这不能证明它就是正在运行的内核。自动发现失败或与桌面版本不一致时，必须通过 `CODEX_DESKTOP_BIN` 明确指定正在使用的 `codex.exe`，不能用 PATH 中的独立 CLI 代替验收。
 
 `setup` 或 `test` 会创建隔离验收会话；这不是日常任务的替代入口。验收必须同时满足数据库路由元数据与子 Agent 返回口令：
 
 ```text
 model_provider = deepseek
-model = deepseek-v4-flash 或 deepseek-v4-pro（必须等于所选模型）
+model = deepseek-flash
 reasoning_effort = high
 agent_role = DeepSeek
 ```

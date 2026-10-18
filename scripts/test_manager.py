@@ -46,10 +46,10 @@ class ManagerTests(unittest.TestCase):
                 paths=manager.resolve_paths(directory)
                 if fail:
                     with self.assertRaises(RuntimeError):
-                        manager.setup(paths,'runtime',False,True,manager.PRO_MODEL,api_key_env=True)
+                        manager.setup(paths,'runtime',False,True,manager.FLASH_MODEL,api_key_env=True)
                     remove.assert_called_once()
                 else:
-                    result=manager.setup(paths,'runtime',False,True,manager.PRO_MODEL,api_key_env=True)
+                    result=manager.setup(paths,'runtime',False,True,manager.FLASH_MODEL,api_key_env=True)
                     self.assertEqual(result['status'],'configured')
                     self.assertNotIn('sk-TEST_ONLY',json.dumps(result))
                 if existing:store.assert_not_called()
@@ -136,7 +136,6 @@ class ManagerTests(unittest.TestCase):
             by_slug[manager.FLASH_MODEL],
             {"slug": manager.FLASH_MODEL, "new": True},
         )
-        self.assertEqual(by_slug[manager.PRO_MODEL], {"slug": manager.PRO_MODEL})
 
     def test_merged_catalog_errors_when_parent_is_missing(self) -> None:
         with self.assertRaises(manager.ManagerError) as raised:
@@ -156,8 +155,8 @@ class ManagerTests(unittest.TestCase):
         self.assertIsNone(manager.configured_parent_model({"model": manager.MODEL}))
 
     def test_agent_is_standalone_text_only_high_reasoning(self) -> None:
-        text = manager.expected_agent_text(manager.PRO_MODEL)
-        self.assertIn(f'model = "{manager.PRO_MODEL}"', text)
+        text = manager.expected_agent_text(manager.FLASH_MODEL)
+        self.assertIn(f'model = "{manager.FLASH_MODEL}"', text)
         self.assertIn('model_provider = "deepseek"', text)
         self.assertIn('model_reasoning_effort = "high"', text)
         self.assertIn("text-only", text)
@@ -166,18 +165,18 @@ class ManagerTests(unittest.TestCase):
     def test_model_selection_prefers_explicit_then_preserves_manifest(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
-            self.assertIsNone(manager.resolve_selected_model(paths, None))
+            self.assertEqual(manager.resolve_selected_model(paths, None), manager.FLASH_MODEL)
             self.assertEqual(
-                manager.resolve_selected_model(paths, manager.PRO_MODEL),
-                manager.PRO_MODEL,
+                manager.resolve_selected_model(paths, manager.FLASH_MODEL),
+                manager.FLASH_MODEL,
             )
             manager.write_manifest(
                 paths,
-                {"schema_version": 4, "selected_model": manager.PRO_MODEL},
+                {"schema_version": 4, "selected_model": manager.FLASH_MODEL},
             )
             self.assertEqual(
                 manager.resolve_selected_model(paths, None),
-                manager.PRO_MODEL,
+                manager.FLASH_MODEL,
             )
             self.assertEqual(
                 manager.resolve_selected_model(paths, manager.FLASH_MODEL),
@@ -512,19 +511,18 @@ class ManagerTests(unittest.TestCase):
                 manager.release_file_lock(lock_file)
         self.assertEqual([call[1:] for call in fake_msvcrt.calls], [(1, 1), (2, 1)])
 
-    def test_onboarding_requests_model_before_credential_or_config(self) -> None:
+    def test_onboarding_defaults_to_flash_before_requesting_credential(self) -> None:
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(
             manager,
             "credential_available",
             return_value=True,
-        ), mock.patch.object(manager, "credential_has_key", return_value=False):
+        ), mock.patch.object(manager, "credential_has_key", return_value=False), mock.patch.object(
+            manager.sys.stdin, "isatty", return_value=False
+        ):
             paths = manager.resolve_paths(directory)
             result = manager.setup(paths, "desktop-codex", False, False, None)
-            self.assertEqual(result["status"], "model_selection_required")
-            self.assertEqual(
-                [option["id"] for option in result["model_options"]],
-                list(manager.SUPPORTED_MODELS),
-            )
+            self.assertEqual(result["status"], "credential_missing")
+            self.assertEqual(manager.SUPPORTED_MODELS, ("deepseek-flash",))
             self.assertFalse(paths.config.exists())
             self.assertFalse(paths.manifest.exists())
 
@@ -536,9 +534,9 @@ class ManagerTests(unittest.TestCase):
         ), mock.patch.object(manager, "credential_has_key", return_value=True):
             paths = manager.resolve_paths(directory)
             paths.agent.parent.mkdir(parents=True, exist_ok=True)
-            paths.agent.write_text(manager.expected_agent_text(manager.PRO_MODEL))
-            result = manager.setup(paths, "desktop-codex", False, False, None)
-            self.assertEqual(result["status"], "model_selection_required")
+            paths.agent.write_text('model = "unmanaged-model"\n')
+            self.assertEqual(manager.resolve_selected_model(paths, None), manager.FLASH_MODEL)
+            self.assertEqual(paths.agent.read_text(), 'model = "unmanaged-model"\n')
             self.assertFalse(paths.config.exists())
             self.assertFalse(paths.manifest.exists())
 
@@ -547,13 +545,15 @@ class ManagerTests(unittest.TestCase):
             manager,
             "credential_available",
             return_value=True,
-        ), mock.patch.object(manager, "credential_has_key", return_value=False):
+        ), mock.patch.object(manager, "credential_has_key", return_value=False), mock.patch.object(
+            manager.sys.stdin, "isatty", return_value=False
+        ):
             result = manager.setup(
                 manager.resolve_paths(directory),
                 "desktop-codex",
                 False,
                 False,
-                manager.PRO_MODEL,
+                manager.FLASH_MODEL,
             )
             self.assertEqual(
                 result,
@@ -575,9 +575,11 @@ class ManagerTests(unittest.TestCase):
                 "desktop-codex",
                 False,
                 True,
-                manager.PRO_MODEL,
+                manager.FLASH_MODEL,
             )
             self.assertEqual(result["status"], "configured")
+            self.assertFalse(result["native_routing_verified"])
+            self.assertIn("inherit", result["compatibility_warning"])
             version.assert_not_called()
 
     def test_repeated_setup_preserves_ownership_and_previous_catalog_selection(self) -> None:
@@ -621,7 +623,7 @@ class ManagerTests(unittest.TestCase):
                 manager.parse_toml_text(paths.config.read_text())["features"]["multi_agent_v2"]
             )
 
-    def test_setup_can_switch_managed_agent_from_flash_to_pro(self) -> None:
+    def test_setup_migrates_managed_legacy_flash_agent(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
@@ -645,22 +647,28 @@ class ManagerTests(unittest.TestCase):
                     True,
                     manager.FLASH_MODEL,
                 )
+                legacy_text = manager.expected_agent_text(manager.LEGACY_FLASH_MODEL)
+                paths.agent.write_text(legacy_text)
+                legacy_manifest = manager.read_manifest(paths)
+                legacy_manifest["selected_model"] = manager.LEGACY_FLASH_MODEL
+                legacy_manifest["agent_sha256"] = manager.sha256_text_file(paths.agent)
+                manager.write_manifest(paths, legacy_manifest)
                 second = manager.setup(
                     paths,
                     "codex",
                     False,
                     True,
-                    manager.PRO_MODEL,
+                    None,
                 )
             self.assertEqual(first["selected_model"], manager.FLASH_MODEL)
-            self.assertEqual(second["selected_model"], manager.PRO_MODEL)
+            self.assertEqual(second["selected_model"], manager.FLASH_MODEL)
             self.assertEqual(
                 manager.parse_toml_text(paths.agent.read_text())["model"],
-                manager.PRO_MODEL,
+                manager.FLASH_MODEL,
             )
             manifest = manager.read_manifest(paths)
             self.assertEqual(manifest["schema_version"], 4)
-            self.assertEqual(manifest["selected_model"], manager.PRO_MODEL)
+            self.assertEqual(manifest["selected_model"], manager.FLASH_MODEL)
             registered = {
                 item["slug"] for item in json.loads(paths.catalog.read_text())["models"]
             }
@@ -683,11 +691,11 @@ class ManagerTests(unittest.TestCase):
                 mock.patch.object(manager, "credential_has_key", return_value=True),
             ]
             with patches[0], patches[1], patches[2], patches[3]:
-                manager.setup(paths, "codex", False, True, manager.PRO_MODEL)
+                manager.setup(paths, "codex", False, True, manager.FLASH_MODEL)
                 repaired = manager.setup(paths, "codex", False, True, None)
-            self.assertEqual(repaired["selected_model"], manager.PRO_MODEL)
+            self.assertEqual(repaired["selected_model"], manager.FLASH_MODEL)
             self.assertIn(
-                f'model = "{manager.PRO_MODEL}"',
+                f'model = "{manager.FLASH_MODEL}"',
                 paths.agent.read_text(),
             )
 
@@ -782,7 +790,9 @@ class ManagerTests(unittest.TestCase):
             self.assertFalse(paths.catalog.exists())
 
     def test_uninstall_rolls_back_all_files_after_failure(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager, "credential_has_key", return_value=False
+        ):
             paths = manager.resolve_paths(directory)
             paths.config.parent.mkdir(parents=True, exist_ok=True)
             paths.config.write_text(
@@ -970,10 +980,159 @@ class ManagerTests(unittest.TestCase):
             self.assertEqual(manager.static_status(paths, "desktop-codex")["status"], "configured")
 
     def test_status_reports_partial_for_empty_home(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager, "credential_has_key", return_value=False
+        ):
             status = manager.static_status(manager.resolve_paths(directory))
             self.assertEqual(status["status"], "partial")
             self.assertFalse(status["checks"]["provider_registered"])
+
+
+class FlashCompatibilityTests(unittest.TestCase):
+    @staticmethod
+    def catalog_script(models, target='"$1"', newline="\n"):
+        payload = json.dumps({"models": models})
+        return f"cat > {target} <<'CODEX_MODELS_JSON'\n{payload}\nCODEX_MODELS_JSON\n".replace("\n", newline)
+
+    def test_catalog_accepts_old_and_new_redirect_targets_and_crlf(self):
+        for target in ('"$TMP_MODELS"', '"$1"'):
+            for newline in ("\n", "\r\n"):
+                with self.subTest(target=target, newline=repr(newline)):
+                    script = self.catalog_script([{"slug": manager.FLASH_MODEL}], target, newline)
+                    self.assertEqual(set(manager.parse_official_deepseek_models(script)), {"deepseek-flash"})
+
+    def test_catalog_migrates_legacy_slug_but_prefers_canonical_metadata(self):
+        legacy = {"slug": manager.LEGACY_FLASH_MODEL, "context_window": 100}
+        current = {"slug": manager.FLASH_MODEL, "context_window": 1048576}
+        for models in ([legacy], [legacy, current], [current, legacy]):
+            parsed = manager.parse_official_deepseek_models(self.catalog_script(models))
+            self.assertEqual(parsed[manager.FLASH_MODEL]["slug"], manager.FLASH_MODEL)
+            self.assertEqual(parsed[manager.FLASH_MODEL]["context_window"],
+                             1048576 if len(models) == 2 else 100)
+
+    def test_catalog_filters_unselected_models(self):
+        parsed = manager.parse_official_deepseek_models(self.catalog_script([
+            {"slug": "unselected-model"}, {"slug": manager.FLASH_MODEL}
+        ]))
+        self.assertEqual(set(parsed), {manager.FLASH_MODEL})
+
+    def test_catalog_rejects_malformed_payload_and_missing_flash(self):
+        cases = [
+            ("echo changed", "official_catalog_changed"),
+            ("cat <<'CODEX_MODELS_JSON'\ninvalid\nCODEX_MODELS_JSON\n", "official_catalog_invalid"),
+            ("cat <<'CODEX_MODELS_JSON'\n[]\nCODEX_MODELS_JSON\n", "official_catalog_invalid"),
+            ("cat <<'CODEX_MODELS_JSON'\n{}\nCODEX_MODELS_JSON\n", "official_catalog_invalid"),
+            (self.catalog_script([None]), "official_catalog_invalid"),
+            (self.catalog_script([{"slug": []}]), "official_catalog_invalid"),
+            (self.catalog_script([]), "official_model_missing"),
+        ]
+        for script, code in cases:
+            with self.subTest(code=code), self.assertRaises(manager.ManagerError) as caught:
+                manager.parse_official_deepseek_models(script)
+            self.assertEqual(caught.exception.code, code)
+
+    def test_fetch_reads_but_does_not_execute_official_script(self):
+        script = self.catalog_script([{"slug": manager.FLASH_MODEL}]).encode()
+        with mock.patch.object(manager.urllib.request, "urlopen") as fetch, mock.patch.object(
+            manager.subprocess, "run", side_effect=AssertionError("must not execute downloaded code")
+        ):
+            fetch.return_value.__enter__.return_value.read.return_value = script
+            self.assertEqual(set(manager.fetch_official_deepseek_models()), {manager.FLASH_MODEL})
+            fetch.assert_called_once()
+
+    def test_legacy_manifest_and_input_resolve_to_flash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            paths = manager.resolve_paths(directory)
+            manager.write_manifest(paths, {"schema_version": 4, "selected_model": manager.LEGACY_FLASH_MODEL})
+            self.assertEqual(manager.configured_deepseek_model(paths), manager.FLASH_MODEL)
+            self.assertEqual(manager.resolve_selected_model(paths, None), manager.FLASH_MODEL)
+            self.assertEqual(manager.resolve_selected_model(paths, manager.LEGACY_FLASH_MODEL), manager.FLASH_MODEL)
+            with self.assertRaises(manager.ManagerError) as caught:
+                manager.resolve_selected_model(paths, "unsupported-model")
+            self.assertEqual(caught.exception.code, "unsupported_model")
+            manager.write_manifest(paths, {"schema_version": 4, "selected_model": "unsupported-model"})
+            with self.assertRaises(manager.ManagerError) as caught:
+                manager.resolve_selected_model(paths, None)
+            self.assertEqual(caught.exception.code, "unsupported_model")
+
+    def test_merge_removes_stale_flash_alias(self):
+        base = {"models": [{"slug": "parent"}, {"slug": manager.LEGACY_FLASH_MODEL}]}
+        merged = manager.merged_catalog(base, deepseek_models(), "parent")
+        self.assertEqual({model["slug"] for model in merged["models"]}, {"parent", manager.FLASH_MODEL})
+
+    def test_merge_removes_retired_managed_models_but_preserves_unmanaged_models(self):
+        base = {"models": [{"slug": "parent"}, {"slug": "retired-managed-model"},
+                           {"slug": "unmanaged-model"}]}
+        merged = manager.merged_catalog(base, deepseek_models(), "parent", ["retired-managed-model"])
+        self.assertEqual({model["slug"] for model in merged["models"]},
+                         {"parent", "unmanaged-model", manager.FLASH_MODEL})
+
+    def test_native_provider_inheritance_is_not_ready_even_with_correct_token(self):
+        events = [
+            {"type": "item.completed", "item": {"type": "collab_tool_call", "tool": "spawn_agent",
+                                                "receiver_thread_ids": ["child"]}},
+            {"type": "item.completed", "item": {"type": "collab_tool_call", "tool": "wait",
+                "agents_states": {"child": {"status": "completed", "message": "NATIVE_DEEPSEEK_OK"}}}},
+        ]
+        proc = SimpleNamespace(returncode=0, stderr="", stdout="\n".join(map(json.dumps, events)))
+        metadata = {"model_provider": "openai", "model": manager.FLASH_MODEL,
+                    "reasoning_effort": manager.EFFORT, "agent_role": manager.ROLE}
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager.subprocess, "run", return_value=proc
+        ), mock.patch.object(manager, "wait_for_child_metadata", return_value=metadata):
+            paths = manager.resolve_paths(directory)
+            paths.config.write_text('model = "parent"\n')
+            with self.assertRaises(manager.ManagerError) as caught:
+                manager.native_test(paths, "codex", manager.FLASH_MODEL)
+            self.assertEqual(caught.exception.code, "native_provider_inherited")
+            self.assertIn("compatibility_warning", caught.exception.details)
+
+    def test_direct_success_cannot_mask_native_failure(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager, "static_status", return_value={"status": "configured"}
+        ), mock.patch.object(manager, "direct_test", return_value={"direct": True}), mock.patch.object(
+            manager, "native_test", side_effect=manager.ManagerError("native_provider_inherited", "blocked")
+        ):
+            paths = manager.resolve_paths(directory)
+            manager.write_manifest(paths, {"schema_version": 4, "selected_model": manager.FLASH_MODEL})
+            with self.assertRaises(manager.ManagerError) as caught:
+                manager.run_tests(paths, "codex")
+            self.assertEqual(caught.exception.code, "native_provider_inherited")
+
+    def test_failed_native_setup_restores_original_config_and_keeps_backup(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(
+            manager, "credential_available", return_value=True
+        ), mock.patch.object(manager, "credential_has_key", return_value=True), mock.patch.object(
+            manager, "fetch_official_deepseek_models", return_value=deepseek_models()
+        ), mock.patch.object(manager, "load_base_catalog", return_value={"models": [{"slug": "parent"}]}), \
+             mock.patch.object(manager, "run_tests", side_effect=manager.ManagerError("native_provider_inherited", "blocked")):
+            paths = manager.resolve_paths(directory)
+            original = 'model = "parent"\n'
+            paths.config.write_text(original)
+            with self.assertRaises(manager.ManagerError):
+                manager.setup(paths, "codex", False, False, None)
+            self.assertEqual(paths.config.read_text(), original)
+            self.assertFalse(paths.agent.exists())
+            self.assertFalse(paths.catalog.exists())
+            backups = list((paths.state_dir / "backups").iterdir())
+            self.assertEqual(len(backups), 1)
+            self.assertEqual((backups[0] / paths.config.name).read_text(), original)
+
+    def test_windows_discovers_cached_desktop_runtime_before_path(self):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.dict(
+            manager.os.environ, {"LOCALAPPDATA": directory}, clear=True
+        ), mock.patch.object(manager, "platform_name", return_value="windows"), mock.patch.object(
+            manager.shutil, "which", return_value="wrong-path-runtime"
+        ) as which:
+            root = Path(directory) / "OpenAI" / "Codex" / "bin"
+            old = root / "old" / "codex.exe"
+            new = root / "new" / "codex.exe"
+            for runtime, stamp in ((old, 100), (new, 200)):
+                runtime.parent.mkdir(parents=True)
+                runtime.write_bytes(b"test fixture only")
+                manager.os.utime(runtime, (stamp, stamp))
+            self.assertEqual(manager.find_desktop_codex(), str(new.resolve()))
+            which.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -31,7 +31,7 @@ node "$SKILL_DIR/scripts/credential-ui/src/profile.ts" setup default
 通过以下入口运行本 Skill 的真实脚本，`--` 后保留原业务参数：
 
 ```bash
-node "$SKILL_DIR/scripts/credential-ui/src/profile.ts" run default -- python3 "$SKILL_DIR/scripts/codex_deepseek.py" setup --model deepseek-v4-pro --api-key-env --json
+node "$SKILL_DIR/scripts/credential-ui/src/profile.ts" run default -- python3 "$SKILL_DIR/scripts/codex_deepseek.py" setup --model deepseek-flash --api-key-env --json
 ```
 
 环境变量优先；缺失时仅从系统库读取当前配置所需的 Key，并只注入可信业务子进程。参数、普通文件和状态输出都不含 Key。使用页面保存的凭据后，后续云端业务命令同样经 run 入口执行，不能只启动配置页后直接运行一个仍仅读环境变量的程序。`--help` 示例只检查业务用法，不表示已调用服务。
